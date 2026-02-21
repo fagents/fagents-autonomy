@@ -112,8 +112,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split('?')[0]
         length = int(self.headers.get('Content-Length', 0))
-        self.rfile.read(length)
+        body = self.rfile.read(length).decode() if length else ''
         if path.startswith('/api/channels/') and path.endswith('/messages'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"ok": true}')
+        elif path.startswith('/api/agents/') and path.endswith('/health'):
+            with open(os.path.join(DATA_DIR, 'last-health-post.json'), 'w') as f:
+                f.write(body)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -913,6 +920,92 @@ assert_empty "$OUTPUT" "ctx.sh: no jsonl files — silent empty output"
 
 rm -rf "$CTX_INT_TMP"
 unset CLAUDE_PROJECT_DIR
+
+echo ""
+
+# ── activity-push.sh tests ──
+
+echo "activity-push.sh:"
+
+AP_SCRIPT="$SCRIPT_DIR/hooks/activity-push.sh"
+
+# Setup: fake AUTONOMY_DIR with mock context.sh
+AP_FAKE_DIR=$(mktemp -d)
+mkdir -p "$AP_FAKE_DIR/awareness"
+cat > "$AP_FAKE_DIR/awareness/context.sh" << 'MOCKCTX'
+#!/bin/bash
+echo "pct='42'"
+echo "label='WARM'"
+echo "label_long='WARMING'"
+MOCKCTX
+chmod +x "$AP_FAKE_DIR/awareness/context.sh"
+
+# Test: no AGENT — exits 0, WARNING on stderr
+SAVE_AGENT="$AGENT"
+unset AGENT
+STDERR=$(AUTONOMY_DIR="$AP_FAKE_DIR" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$AP_SCRIPT" </dev/null 2>&1 >/dev/null) || true
+assert_contains "$STDERR" "WARNING" "activity-push: no AGENT — WARNING on stderr"
+export AGENT="$SAVE_AGENT"
+
+# Test: context.sh returns nothing — exits 0 silently
+AP_EMPTY_DIR=$(mktemp -d)
+mkdir -p "$AP_EMPTY_DIR/awareness"
+cat > "$AP_EMPTY_DIR/awareness/context.sh" << 'MOCKCTX2'
+#!/bin/bash
+exit 1
+MOCKCTX2
+chmod +x "$AP_EMPTY_DIR/awareness/context.sh"
+OUTPUT=$(AUTONOMY_DIR="$AP_EMPTY_DIR" AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$AP_SCRIPT" </dev/null 2>&1) || true
+assert_empty "$OUTPUT" "activity-push: no context data — silent exit"
+rm -rf "$AP_EMPTY_DIR"
+
+# Test: no COMMS_TOKEN — exits 0 silently
+OUTPUT=$(AUTONOMY_DIR="$AP_FAKE_DIR" AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="" \
+    bash "$AP_SCRIPT" </dev/null 2>&1) || true
+assert_empty "$OUTPUT" "activity-push: no COMMS_TOKEN — silent exit"
+
+# Test: valid JSON stdin — tool_name extracted, POST sent
+rm -f "$MOCK_DIR/last-health-post.json"
+echo '{"tool_name":"Read","tool_input":{"file":"/tmp/x"}}' | \
+    AUTONOMY_DIR="$AP_FAKE_DIR" AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$AP_SCRIPT" 2>/dev/null
+sleep 0.3
+HEALTH_BODY=$(cat "$MOCK_DIR/last-health-post.json" 2>/dev/null || echo "")
+assert_contains "$HEALTH_BODY" '"last_tool":"Read"' "activity-push: tool_name extracted from JSON"
+assert_contains "$HEALTH_BODY" '"context_pct":42' "activity-push: context_pct in POST body"
+assert_contains "$HEALTH_BODY" '"status":"active"' "activity-push: status=active in POST body"
+
+# Test: invalid JSON stdin — tool falls back to "?"
+rm -f "$MOCK_DIR/last-health-post.json"
+echo 'not json at all' | \
+    AUTONOMY_DIR="$AP_FAKE_DIR" AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$AP_SCRIPT" 2>/dev/null
+sleep 0.3
+HEALTH_BODY=$(cat "$MOCK_DIR/last-health-post.json" 2>/dev/null || echo "")
+assert_contains "$HEALTH_BODY" '"last_tool":"?"' "activity-push: invalid JSON — tool falls back to ?"
+
+# Test: empty stdin — tool falls back to "?"
+rm -f "$MOCK_DIR/last-health-post.json"
+echo '' | \
+    AUTONOMY_DIR="$AP_FAKE_DIR" AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$AP_SCRIPT" 2>/dev/null
+sleep 0.3
+HEALTH_BODY=$(cat "$MOCK_DIR/last-health-post.json" 2>/dev/null || echo "")
+assert_contains "$HEALTH_BODY" '"last_tool":"?"' "activity-push: empty stdin — tool falls back to ?"
+
+# Test: POST targets correct agent endpoint
+rm -f "$MOCK_DIR/last-health-post.json"
+echo '{"tool_name":"Bash"}' | \
+    AUTONOMY_DIR="$AP_FAKE_DIR" AGENT="MyAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$AP_SCRIPT" 2>/dev/null
+sleep 0.3
+# If we got a health post, the endpoint was hit (agent name is in URL, not body)
+HEALTH_BODY=$(cat "$MOCK_DIR/last-health-post.json" 2>/dev/null || echo "")
+assert_contains "$HEALTH_BODY" '"context_pct":42' "activity-push: POST reaches health endpoint with different agent"
+
+rm -rf "$AP_FAKE_DIR"
 
 echo ""
 
