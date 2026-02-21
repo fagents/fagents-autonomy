@@ -31,17 +31,19 @@ print(line)
 " 2>/dev/null || echo "unknown")
 
 # Post stop notice to comms
+MSG_PAYLOAD=$(jq -nc --arg msg "Session ended: $REASON" '{message: $msg}')
 curl -s -X POST --max-time 5 \
     -H "Authorization: Bearer $COMMS_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"message\":\"Session ended: $REASON\"}" \
+    -d "$MSG_PAYLOAD" \
     "$COMMS_URL/api/channels/$CHANNEL/messages" >/dev/null 2>&1 || true
 
 # Push final health update with stopped status
+HEALTH_PAYLOAD=$(jq -nc --arg reason "$REASON" '{status: "stopped", stop_reason: $reason}')
 curl -s -X POST --max-time 3 \
     -H "Authorization: Bearer $COMMS_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"status\":\"stopped\",\"stop_reason\":\"$REASON\"}" \
+    -d "$HEALTH_PAYLOAD" \
     "$COMMS_URL/api/agents/$AGENT/health" >/dev/null 2>&1 || true
 
 exit 0

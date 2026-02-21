@@ -33,10 +33,12 @@ INPUT=$(cat)
 TOOL=$(echo "$INPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name','?'))" 2>/dev/null || echo "?")
 
 # Push context to health endpoint
+PAYLOAD=$(jq -nc --argjson pct "$PCT" --arg tool "$TOOL" \
+    '{context_pct: $pct, status: "active", last_tool: $tool}')
 curl -s -X POST --max-time 3 \
     -H "Authorization: Bearer $COMMS_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"context_pct\":$PCT,\"status\":\"active\",\"last_tool\":\"$TOOL\"}" \
+    -d "$PAYLOAD" \
     "$COMMS_URL/api/agents/$AGENT/health" >/dev/null 2>&1 || true
 
 exit 0
