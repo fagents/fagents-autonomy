@@ -58,9 +58,13 @@ if include_soul:
 print(json.dumps(payload))
 " "$STATE_FILE" "$INCLUDE_SOUL" 2>/dev/null) || exit 0
 
-# Resolve agent name
-AGENT=$(curl -s --max-time 3 -H "Authorization: Bearer $COMMS_TOKEN" \
-    "$COMMS_URL/api/whoami" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('agent',''))" 2>/dev/null) || exit 0
+# Resolve agent name — prefer env (set by daemon.sh), fall back to whoami
+AGENT="${AGENT:-}"
+if [ -z "$AGENT" ]; then
+    AGENT=$(curl -s --max-time 3 -H "Authorization: Bearer $COMMS_TOKEN" \
+        "$COMMS_URL/api/whoami" 2>/dev/null \
+        | jq -r '.agent // empty' 2>/dev/null) || exit 0
+fi
 
 if [ -z "$AGENT" ]; then exit 0; fi
 
