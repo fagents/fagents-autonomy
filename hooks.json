@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "\"$AUTONOMY_DIR\"/hooks/startup-notice.sh"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "\"$AUTONOMY_DIR\"/hooks/inject-context.sh"}]}
+    ],
+    "PreToolUse": [
+      {"hooks": [{"type": "command", "command": "\"$AUTONOMY_DIR\"/hooks/inject-awareness.sh"}]}
+    ],
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": "\"$AUTONOMY_DIR\"/hooks/activity-push.sh", "async": true, "timeout": 10}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "\"$AUTONOMY_DIR\"/hooks/session-stop.sh", "timeout": 10}]}
+    ]
+  }
+}
