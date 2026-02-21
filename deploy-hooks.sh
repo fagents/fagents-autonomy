@@ -97,7 +97,7 @@ print(f'  Hooks updated: {list(hooks_config[\"hooks\"].keys())}')
 
 # ── Step 3: Report to comms ──
 if [ -x "$CLIENT" ] && [ -n "${COMMS_TOKEN:-}" ]; then
-    "$CLIENT" send fagents-autonomy "$AGENT" "Deploy complete: $OLD_HEAD → $NEW_HEAD. Hooks updated." 2>/dev/null || true
+    "$CLIENT" send fagents-autonomy "[$AGENT] Deploy complete: $OLD_HEAD → $NEW_HEAD. Hooks updated." 2>/dev/null || true
 fi
 
 # ── Step 4: Restart daemon (if requested) ──
@@ -114,7 +114,7 @@ if [ "$DO_RESTART" = true ]; then
 
     # Report before dying
     if [ -x "$CLIENT" ] && [ -n "${COMMS_TOKEN:-}" ]; then
-        "$CLIENT" send fagents-autonomy "$AGENT" "Restarting daemon now. Back in ~10s." 2>/dev/null || true
+        "$CLIENT" send fagents-autonomy "[$AGENT] Restarting daemon now. Back in ~10s." 2>/dev/null || true
     fi
 
     # Release the inherited flock FIRST — this allows a new daemon to start.
