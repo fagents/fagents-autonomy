@@ -617,6 +617,43 @@ assert_contains "$LOG_CONTENT" "WARNING" "logs WARNING on unreachable"
 
 echo ""
 
+# ── WAKE_CHANNEL extraction tests ──
+
+echo "WAKE_CHANNEL extraction (sed):"
+
+# Helper matching daemon.sh line 388
+extract_channel() { echo "$1" | sed -n 's/^--- #\([^ ]*\).*/\1/p' | head -1; }
+
+# Test: normal channel extraction
+RESULT=$(extract_channel "--- #general (1 mentions) ---
+[2026-02-21 10:00] [Juho] hello")
+assert_eq "general" "$RESULT" "extracts channel from mentions"
+
+# Test: hyphenated channel name
+RESULT=$(extract_channel "--- #dm-ftf (2 mentions) ---")
+assert_eq "dm-ftf" "$RESULT" "extracts hyphenated channel name"
+
+# Test: multiple channels — picks first
+RESULT=$(extract_channel "--- #general (1 mentions) ---
+[2026-02-21 10:00] [Juho] hello
+--- #dm-ftf (1 mentions) ---
+[2026-02-21 10:01] [FTW] ping")
+assert_eq "general" "$RESULT" "multiple channels: picks first"
+
+# Test: no channel — empty
+RESULT=$(extract_channel "no channel markers here")
+assert_empty "$RESULT" "no channel marker: returns empty"
+
+# Test: empty input
+RESULT=$(extract_channel "")
+assert_empty "$RESULT" "empty input: returns empty"
+
+# Test: channel with underscores
+RESULT=$(extract_channel "--- #fagent_dev (3 mentions) ---")
+assert_eq "fagent_dev" "$RESULT" "extracts underscored channel name"
+
+echo ""
+
 # ── context-usage.sh tests ──
 
 echo "context-usage.sh:"
