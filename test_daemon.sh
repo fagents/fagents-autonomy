@@ -1394,6 +1394,54 @@ rm -rf "$DH_TMP"
 
 echo ""
 
+# ── process.sh tests ──
+
+echo "process.sh:"
+
+PROC_SCRIPT="$SCRIPT_DIR/awareness/process.sh"
+
+# Test: output is valid JSON
+PROC_OUT=$(bash "$PROC_SCRIPT" 2>/dev/null) || true
+echo "$PROC_OUT" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null
+assert_eq "0" "$?" "process.sh: output is valid JSON"
+
+# Test: has all required keys
+KEYS=$(echo "$PROC_OUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(','.join(sorted(d.keys())))" 2>/dev/null)
+assert_eq "daemon_pid,has_resume,is_daemon,pid,session_id" "$KEYS" "process.sh: all required keys present"
+
+# Test: booleans are actual booleans (not strings)
+TYPES=$(echo "$PROC_OUT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(type(d['is_daemon']).__name__, type(d['has_resume']).__name__)
+" 2>/dev/null)
+assert_eq "bool bool" "$TYPES" "process.sh: booleans are JSON booleans"
+
+# Test: pid/daemon_pid are integers
+TYPES=$(echo "$PROC_OUT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(type(d['pid']).__name__, type(d['daemon_pid']).__name__)
+" 2>/dev/null)
+assert_eq "int int" "$TYPES" "process.sh: pid values are integers"
+
+# Test: session_id is a string
+SID_TYPE=$(echo "$PROC_OUT" | python3 -c "import json,sys; print(type(json.load(sys.stdin)['session_id']).__name__)" 2>/dev/null)
+assert_eq "str" "$SID_TYPE" "process.sh: session_id is a string"
+
+# Test: is_daemon and has_resume are consistent (both booleans, not string "true"/"false")
+BOOL_CHECK=$(echo "$PROC_OUT" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+# Verify no string booleans leaked through
+assert d['is_daemon'] in (True, False)
+assert d['has_resume'] in (True, False)
+print('ok')
+" 2>/dev/null)
+assert_eq "ok" "$BOOL_CHECK" "process.sh: boolean values are True/False not strings"
+
+echo ""
+
 # ── Summary ──
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
