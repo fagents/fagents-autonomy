@@ -1252,6 +1252,82 @@ rm -rf "$CS_DIR" "$CS_CACHE" "$CS_TEST"
 
 echo ""
 
+# ── inject-context.sh tests ──
+
+echo "inject-context.sh:"
+
+IC_SCRIPT="$SCRIPT_DIR/hooks/inject-context.sh"
+
+# Setup: fake AUTONOMY_DIR with mock awareness scripts
+IC_DIR=$(mktemp -d)
+mkdir -p "$IC_DIR/awareness"
+
+cat > "$IC_DIR/awareness/time.sh" << 'MOCK'
+#!/bin/bash
+echo "20:15:00 EET"
+MOCK
+chmod +x "$IC_DIR/awareness/time.sh"
+
+cat > "$IC_DIR/awareness/context.sh" << 'MOCK'
+#!/bin/bash
+echo "pct='63'"
+echo "label='WARM'"
+echo "label_long='WARMING'"
+echo "used_tokens='126000'"
+echo "ctx_size='200000'"
+MOCK
+chmod +x "$IC_DIR/awareness/context.sh"
+
+cat > "$IC_DIR/awareness/compaction.sh" << 'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+chmod +x "$IC_DIR/awareness/compaction.sh"
+
+cat > "$IC_DIR/awareness/git.sh" << 'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+chmod +x "$IC_DIR/awareness/git.sh"
+
+# Test: time in output
+OUTPUT=$(AUTONOMY_DIR="$IC_DIR" bash "$IC_SCRIPT" 2>/dev/null) || true
+assert_contains "$OUTPUT" "Current time: 20:15:00 EET" "inject-context: time in output"
+
+# Test: context line formatted correctly
+assert_contains "$OUTPUT" "Context: 63% (WARMING)" "inject-context: context pct and label"
+assert_contains "$OUTPUT" "~126000tok" "inject-context: tokens in context line"
+
+# Test: compaction message shown when triggered
+cat > "$IC_DIR/awareness/compaction.sh" << 'MOCK'
+#!/bin/bash
+echo "COMPACTION: read SOUL.md, TEAM.md, MEMORY.md"
+MOCK
+chmod +x "$IC_DIR/awareness/compaction.sh"
+OUTPUT=$(AUTONOMY_DIR="$IC_DIR" bash "$IC_SCRIPT" 2>/dev/null) || true
+assert_contains "$OUTPUT" "COMPACTION" "inject-context: compaction warning shown"
+
+# Test: git context shown when present
+cat > "$IC_DIR/awareness/git.sh" << 'MOCK'
+#!/bin/bash
+echo "New commits in autonomy (origin/main):"
+echo "abc1234 Fix bug"
+MOCK
+chmod +x "$IC_DIR/awareness/git.sh"
+OUTPUT=$(AUTONOMY_DIR="$IC_DIR" bash "$IC_SCRIPT" 2>/dev/null) || true
+assert_contains "$OUTPUT" "New commits" "inject-context: git context shown"
+
+# Test: no scripts — no output
+IC_EMPTY=$(mktemp -d)
+mkdir -p "$IC_EMPTY/awareness"
+OUTPUT=$(AUTONOMY_DIR="$IC_EMPTY" bash "$IC_SCRIPT" 2>/dev/null) || true
+assert_empty "$OUTPUT" "inject-context: no scripts — no output"
+rm -rf "$IC_EMPTY"
+
+rm -rf "$IC_DIR"
+
+echo ""
+
 # ── Summary ──
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
