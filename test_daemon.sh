@@ -114,6 +114,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(length).decode() if length else ''
         if path.startswith('/api/channels/') and path.endswith('/messages'):
+            with open(os.path.join(DATA_DIR, 'last-msg-post.json'), 'w') as f:
+                f.write(body)
+            with open(os.path.join(DATA_DIR, 'last-msg-path.txt'), 'w') as f:
+                f.write(path)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -1006,6 +1010,79 @@ HEALTH_BODY=$(cat "$MOCK_DIR/last-health-post.json" 2>/dev/null || echo "")
 assert_contains "$HEALTH_BODY" '"context_pct":42' "activity-push: POST reaches health endpoint with different agent"
 
 rm -rf "$AP_FAKE_DIR"
+
+echo ""
+
+# ── session-stop.sh tests ──
+
+echo "session-stop.sh:"
+
+SS_SCRIPT="$SCRIPT_DIR/hooks/session-stop.sh"
+
+# Test: no AGENT — exits 0, WARNING on stderr
+SAVE_AGENT="$AGENT"
+unset AGENT
+STDERR=$(COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$SS_SCRIPT" </dev/null 2>&1 >/dev/null) || true
+assert_contains "$STDERR" "WARNING" "session-stop: no AGENT — WARNING on stderr"
+export AGENT="$SAVE_AGENT"
+
+# Test: no COMMS_TOKEN — exits 0 silently
+OUTPUT=$(AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="" \
+    bash "$SS_SCRIPT" </dev/null 2>&1) || true
+assert_empty "$OUTPUT" "session-stop: no COMMS_TOKEN — silent exit"
+
+# Test: valid JSON — reason extracted from last_assistant_message
+rm -f "$MOCK_DIR/last-health-post.json" "$MOCK_DIR/last-msg-post.json" "$MOCK_DIR/last-msg-path.txt"
+echo '{"last_assistant_message":"Task completed successfully"}' | \
+    AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" WAKE_CHANNEL="dev" \
+    bash "$SS_SCRIPT" 2>/dev/null
+sleep 0.3
+MSG_BODY=$(cat "$MOCK_DIR/last-msg-post.json" 2>/dev/null || echo "")
+HEALTH_BODY=$(cat "$MOCK_DIR/last-health-post.json" 2>/dev/null || echo "")
+assert_contains "$MSG_BODY" "Task completed successfully" "session-stop: reason in message POST"
+assert_contains "$HEALTH_BODY" '"status":"stopped"' "session-stop: health POST has stopped status"
+assert_contains "$HEALTH_BODY" "Task completed successfully" "session-stop: reason in health POST"
+
+# Test: posts to WAKE_CHANNEL
+MSG_PATH=$(cat "$MOCK_DIR/last-msg-path.txt" 2>/dev/null || echo "")
+assert_contains "$MSG_PATH" "/api/channels/dev/messages" "session-stop: posts to WAKE_CHANNEL"
+
+# Test: defaults to general when WAKE_CHANNEL not set
+rm -f "$MOCK_DIR/last-msg-path.txt"
+echo '{"last_assistant_message":"done"}' | \
+    AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" WAKE_CHANNEL="" \
+    bash "$SS_SCRIPT" 2>/dev/null
+sleep 0.3
+MSG_PATH=$(cat "$MOCK_DIR/last-msg-path.txt" 2>/dev/null || echo "")
+assert_contains "$MSG_PATH" "/api/channels/general/messages" "session-stop: defaults to general channel"
+
+# Test: invalid JSON — reason falls back to "unknown"
+rm -f "$MOCK_DIR/last-health-post.json"
+echo 'not json' | \
+    AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$SS_SCRIPT" 2>/dev/null
+sleep 0.3
+HEALTH_BODY=$(cat "$MOCK_DIR/last-health-post.json" 2>/dev/null || echo "")
+assert_contains "$HEALTH_BODY" "unknown" "session-stop: invalid JSON — reason=unknown"
+
+# Test: multi-line message — only first line used
+rm -f "$MOCK_DIR/last-health-post.json"
+printf '{"last_assistant_message":"First line\\nSecond line\\nThird line"}' | \
+    AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$SS_SCRIPT" 2>/dev/null
+sleep 0.3
+HEALTH_BODY=$(cat "$MOCK_DIR/last-health-post.json" 2>/dev/null || echo "")
+assert_contains "$HEALTH_BODY" "First line" "session-stop: multi-line — uses first line"
+
+# Test: empty last_assistant_message — falls back to "no message"
+rm -f "$MOCK_DIR/last-health-post.json"
+echo '{"last_assistant_message":""}' | \
+    AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$SS_SCRIPT" 2>/dev/null
+sleep 0.3
+HEALTH_BODY=$(cat "$MOCK_DIR/last-health-post.json" 2>/dev/null || echo "")
+assert_contains "$HEALTH_BODY" "no message" "session-stop: empty message — falls back to 'no message'"
 
 echo ""
 
