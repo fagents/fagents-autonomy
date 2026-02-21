@@ -34,8 +34,10 @@ fi
 echo "$NOW" > "$CACHE_FILE"
 
 # Fetch recent messages from monitored channels
+CHANNELS="${CHANNELS:-general}"
+IFS=',' read -ra _CH_ARRAY <<< "$CHANNELS"
 MSGS=""
-for CHANNEL in general red-team-imagine; do
+for CHANNEL in "${_CH_ARRAY[@]}"; do
     RESULT=$("$CLIENT" fetch "$CHANNEL" --since 2m 2>/dev/null) || true
     [ -n "$RESULT" ] && MSGS="${MSGS}${RESULT}"$'\n'
 done
