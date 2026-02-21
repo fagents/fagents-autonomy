@@ -62,6 +62,11 @@ echo "  Comms:     $COMMS_URL"
 echo "  Autonomy:  $AUTONOMY_REPO"
 echo "  MCP:       ${MCP_ENABLED,,}"
 echo ""
+
+# Extract port from COMMS_URL (used for tunnels + start script)
+COMMS_PORT=$(echo "$COMMS_URL" | sed 's|.*:\([0-9]*\).*|\1|')
+[[ -z "$COMMS_PORT" ]] && COMMS_PORT="9754"
+
 if [[ -z "${NONINTERACTIVE:-}" ]]; then
     read -rp "Continue? [Y/n] " confirm
     if [[ "${confirm,,}" == "n" ]]; then
@@ -235,11 +240,6 @@ echo ""
 echo "=== Step 5: Comms registration ==="
 
 # Try to establish SSH tunnel if comms not reachable
-COMMS_PORT=$(echo "$COMMS_URL" | sed 's|.*:\([0-9]*\).*|\1|')
-if [[ -z "$COMMS_PORT" ]]; then
-    COMMS_PORT="9754"
-fi
-
 comms_reachable() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" "$COMMS_URL/health" 2>/dev/null)
@@ -338,11 +338,6 @@ echo "=== Step 7: Agent start script ==="
 TOKEN_LINE="export COMMS_TOKEN=\"$COMMS_TOKEN\""
 if [[ -z "$COMMS_TOKEN" ]]; then
     TOKEN_LINE="export COMMS_TOKEN=\"<register agent and paste token here>\""
-fi
-
-COMMS_PORT=$(echo "$COMMS_URL" | sed 's|.*:\([0-9]*\).*|\1|')
-if [[ -z "$COMMS_PORT" ]]; then
-    COMMS_PORT="9754"
 fi
 
 # Determine SSH tunnel target — use GIT_HOST if it's a remote SSH host
