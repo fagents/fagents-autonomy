@@ -463,6 +463,82 @@ rm -rf "$TEST_PROMPTS_DIR"
 
 echo ""
 
+# ── context-usage.sh tests ──
+
+echo "context-usage.sh:"
+
+CTX_SCRIPT="$SCRIPT_DIR/awareness/context-usage.sh"
+CTX_TMP=$(mktemp -d)
+
+# Test: normal usage data — correct calculation
+cat > "$CTX_TMP/normal.jsonl" << 'EOF'
+{"type":"other","data":"irrelevant"}
+{"message":{"usage":{"input_tokens":50000,"cache_creation_input_tokens":10000,"cache_read_input_tokens":40000}}}
+EOF
+OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/normal.jsonl" 200000)
+assert_contains "$OUTPUT" "pct=50" "normal: pct=50 for 100k/200k"
+assert_contains "$OUTPUT" "remaining=50" "normal: remaining=50"
+assert_contains "$OUTPUT" "used_tokens=100000" "normal: used_tokens=100000"
+assert_contains "$OUTPUT" "ctx_size=200000" "normal: ctx_size=200000"
+assert_contains "$OUTPUT" "input_tokens=50000" "normal: input_tokens=50000"
+assert_contains "$OUTPUT" "cache_create=10000" "normal: cache_create=10000"
+assert_contains "$OUTPUT" "cache_read=40000" "normal: cache_read=40000"
+
+# Test: picks last usage entry, not first
+cat > "$CTX_TMP/multi.jsonl" << 'EOF'
+{"message":{"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"message":{"usage":{"input_tokens":80000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+EOF
+OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/multi.jsonl" 200000)
+assert_contains "$OUTPUT" "pct=40" "multi: picks last entry (80k not 1k)"
+assert_contains "$OUTPUT" "input_tokens=80000" "multi: input_tokens from last entry"
+
+# Test: custom context window size
+cat > "$CTX_TMP/custom.jsonl" << 'EOF'
+{"message":{"usage":{"input_tokens":50000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+EOF
+OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/custom.jsonl" 100000)
+assert_contains "$OUTPUT" "pct=50" "custom ctx: 50k/100k = 50%"
+assert_contains "$OUTPUT" "ctx_size=100000" "custom ctx: ctx_size=100000"
+
+# Test: default context window size (200000)
+OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/custom.jsonl")
+assert_contains "$OUTPUT" "pct=25" "default ctx: 50k/200k = 25%"
+assert_contains "$OUTPUT" "ctx_size=200000" "default ctx: ctx_size=200000"
+
+# Test: missing file — error output
+OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/nonexistent.jsonl" 2>/dev/null) || true
+assert_contains "$OUTPUT" "error=file_not_found" "missing file: error=file_not_found"
+
+# Test: no usage data in JSONL
+cat > "$CTX_TMP/no_usage.jsonl" << 'EOF'
+{"type":"request","data":"no usage here"}
+{"message":{"content":"just text, no usage"}}
+EOF
+OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/no_usage.jsonl")
+assert_contains "$OUTPUT" "error=no_usage_data" "no usage: error=no_usage_data"
+
+# Test: malformed JSON lines skipped gracefully
+cat > "$CTX_TMP/malformed.jsonl" << 'EOF'
+not json at all
+{"broken json
+{"message":{"usage":{"input_tokens":30000,"cache_creation_input_tokens":5000,"cache_read_input_tokens":15000}}}
+EOF
+OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/malformed.jsonl" 200000)
+assert_contains "$OUTPUT" "pct=25" "malformed: skips bad lines, reads valid one (50k/200k)"
+assert_contains "$OUTPUT" "used_tokens=50000" "malformed: used_tokens=50000"
+
+# Test: integer division (no decimals)
+cat > "$CTX_TMP/rounding.jsonl" << 'EOF'
+{"message":{"usage":{"input_tokens":33333,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+EOF
+OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/rounding.jsonl" 200000)
+assert_contains "$OUTPUT" "pct=16" "rounding: 33333/200000 = 16% (integer division)"
+
+rm -rf "$CTX_TMP"
+
+echo ""
+
 # ── Summary ──
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
