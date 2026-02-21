@@ -11,7 +11,7 @@ CLIENT="$AUTONOMY_DIR/comms/client.sh"
 
 [ -x "$CLIENT" ] || exit 0
 
-CACHE_DIR="/tmp/.comms-check"
+CACHE_DIR="/tmp/.comms-check-${AGENT:-default}"
 CACHE_FILE="$CACHE_DIR/last-ts"
 CACHE_RESULT="$CACHE_DIR/result"
 CACHE_INTERVAL=30

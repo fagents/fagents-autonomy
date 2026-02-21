@@ -1199,7 +1199,7 @@ MOCK
 
 # Patch comms.sh to use our cache dir (sed on a temp copy)
 CS_TEST=$(mktemp)
-sed "s|CACHE_DIR=\"/tmp/.comms-check\"|CACHE_DIR=\"$CS_CACHE\"|" "$COMMS_SCRIPT" > "$CS_TEST"
+sed 's|CACHE_DIR=.*|CACHE_DIR="'"$CS_CACHE"'"|' "$COMMS_SCRIPT" > "$CS_TEST"
 chmod +x "$CS_TEST"
 
 # Test: PAUSE from Juho — triggers alert
