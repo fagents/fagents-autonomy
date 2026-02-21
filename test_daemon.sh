@@ -647,6 +647,84 @@ unset PROJECT_DIR
 
 echo ""
 
+# ── context.sh integration tests ──
+
+echo "context.sh:"
+
+CTX_INT_SCRIPT="$SCRIPT_DIR/awareness/context.sh"
+CTX_INT_TMP=$(mktemp -d)
+mkdir -p "$CTX_INT_TMP/.freeturtle"
+export CLAUDE_PROJECT_DIR="$CTX_INT_TMP"
+
+# Helper: create a JSONL with specific token values
+make_jsonl() {
+    local inp="$1" cc="${2:-0}" cr="${3:-0}"
+    cat > "$CTX_INT_TMP/.freeturtle/session.jsonl" << EOF
+{"message":{"usage":{"input_tokens":$inp,"cache_creation_input_tokens":$cc,"cache_read_input_tokens":$cr}}}
+EOF
+}
+
+# Test: OK label (< 40%)
+make_jsonl 30000 0 0
+OUTPUT=$("$CTX_INT_SCRIPT")
+eval "$OUTPUT"
+assert_eq "OK" "$label" "ctx.sh: label=OK for 15%"
+assert_eq "HEALTHY" "$label_long" "ctx.sh: label_long=HEALTHY for 15%"
+assert_contains "$formatted" "OK" "ctx.sh: formatted contains OK"
+
+# Test: WARM label (40-69%)
+make_jsonl 80000 0 0
+OUTPUT=$("$CTX_INT_SCRIPT")
+eval "$OUTPUT"
+assert_eq "WARM" "$label" "ctx.sh: label=WARM for 40%"
+assert_eq "WARMING" "$label_long" "ctx.sh: label_long=WARMING for 40%"
+
+# Test: HEAVY label (70-89%)
+make_jsonl 100000 20000 20000
+OUTPUT=$("$CTX_INT_SCRIPT")
+eval "$OUTPUT"
+assert_eq "HEAVY" "$label" "ctx.sh: label=HEAVY for 70%"
+assert_eq "HEAVY" "$label_long" "ctx.sh: label_long=HEAVY for 70%"
+
+# Test: CRIT label (90%+)
+make_jsonl 100000 40000 50000
+OUTPUT=$("$CTX_INT_SCRIPT")
+eval "$OUTPUT"
+assert_eq "CRIT" "$label" "ctx.sh: label=CRIT for 95%"
+assert_eq "CRITICAL" "$label_long" "ctx.sh: label_long=CRITICAL for 95%"
+
+# Test: outputs all expected keys
+make_jsonl 50000 10000 40000
+OUTPUT=$("$CTX_INT_SCRIPT")
+assert_contains "$OUTPUT" "pct=" "ctx.sh: outputs pct"
+assert_contains "$OUTPUT" "label=" "ctx.sh: outputs label"
+assert_contains "$OUTPUT" "label_long=" "ctx.sh: outputs label_long"
+assert_contains "$OUTPUT" "formatted=" "ctx.sh: outputs formatted"
+assert_contains "$OUTPUT" "remaining=" "ctx.sh: outputs remaining"
+assert_contains "$OUTPUT" "used_tokens=" "ctx.sh: outputs used_tokens"
+assert_contains "$OUTPUT" "input_tokens=" "ctx.sh: outputs input_tokens"
+assert_contains "$OUTPUT" "cache_create=" "ctx.sh: outputs cache_create"
+assert_contains "$OUTPUT" "cache_read=" "ctx.sh: outputs cache_read"
+
+# Test: no JSONL dir — silent exit, no output
+SAVE_PROJ="$CLAUDE_PROJECT_DIR"
+export CLAUDE_PROJECT_DIR="/tmp/nonexistent-$$"
+OUTPUT=$("$CTX_INT_SCRIPT") || true
+assert_empty "$OUTPUT" "ctx.sh: no jsonl dir — silent empty output"
+export CLAUDE_PROJECT_DIR="$SAVE_PROJ"
+
+# Test: empty JSONL dir — silent exit
+mkdir -p "$CTX_INT_TMP/.freeturtle-empty"
+export CLAUDE_PROJECT_DIR="$CTX_INT_TMP"
+rm -f "$CTX_INT_TMP/.freeturtle"/*.jsonl
+OUTPUT=$("$CTX_INT_SCRIPT") || true
+assert_empty "$OUTPUT" "ctx.sh: no jsonl files — silent empty output"
+
+rm -rf "$CTX_INT_TMP"
+unset CLAUDE_PROJECT_DIR
+
+echo ""
+
 # ── Summary ──
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
