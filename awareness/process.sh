@@ -36,4 +36,10 @@ if [ -z "$session_id" ] && [ -f "$SESSION_FILE" ]; then
     session_id=$(cat "$SESSION_FILE" 2>/dev/null | tr -d '[:space:]')
 fi
 
-echo "{\"is_daemon\": $is_daemon, \"has_resume\": $has_resume, \"session_id\": \"$session_id\", \"pid\": $claude_pid, \"daemon_pid\": $daemon_pid}"
+jq -nc \
+    --argjson is_daemon "$is_daemon" \
+    --argjson has_resume "$has_resume" \
+    --arg session_id "$session_id" \
+    --argjson pid "$claude_pid" \
+    --argjson daemon_pid "$daemon_pid" \
+    '{is_daemon: $is_daemon, has_resume: $has_resume, session_id: $session_id, pid: $pid, daemon_pid: $daemon_pid}'
