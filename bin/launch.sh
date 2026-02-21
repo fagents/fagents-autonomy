@@ -70,6 +70,6 @@ fi
 
 # ── Launch daemon ──
 echo "Starting $AGENT daemon..."
-nohup "$AUTONOMY_DIR/daemon.sh" "$HEARTBEAT_INTERVAL" "$AGENT" > /dev/null 2>&1 &
+nohup "$AUTONOMY_DIR/daemon.sh" "$HEARTBEAT_INTERVAL" > /dev/null 2>&1 &
 echo "PID: $!"
 echo "Log: tail -f $PROJECT_DIR/.autonomy/daemon.log"
