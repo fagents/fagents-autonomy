@@ -21,15 +21,16 @@ eval "$("$HELPER" "$JSONL" 2>/dev/null)" 2>/dev/null || exit 0
 [ -z "${error:-}" ] || exit 0
 [ -n "${pct:-}" ] || exit 0
 
-LABEL='OK'
-[ "${pct:-0}" -ge 40 ] && LABEL='WARM'
-[ "${pct:-0}" -ge 70 ] && LABEL='HEAVY'
-[ "${pct:-0}" -ge 90 ] && LABEL='CRIT'
+LABEL='OK';       LABEL_LONG='HEALTHY'
+[ "${pct:-0}" -ge 40 ] && LABEL='WARM' && LABEL_LONG='WARMING'
+[ "${pct:-0}" -ge 70 ] && LABEL='HEAVY' && LABEL_LONG='HEAVY'
+[ "${pct:-0}" -ge 90 ] && LABEL='CRIT' && LABEL_LONG='CRITICAL'
 
 FORMATTED="Ctx: ${pct}% ($LABEL)"
 
 echo "pct='$pct'"
 echo "label='$LABEL'"
+echo "label_long='$LABEL_LONG'"
 echo "formatted='$FORMATTED'"
 echo "remaining='$((100 - pct))'"
 echo "used_tokens='$used_tokens'"

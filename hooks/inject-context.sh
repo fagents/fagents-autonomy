@@ -14,12 +14,7 @@ TIME=$("$AUTONOMY_DIR/awareness/time.sh" 2>/dev/null) || true
 CTX_OUT=$("$AUTONOMY_DIR/awareness/context.sh" 2>/dev/null) || true
 if [ -n "$CTX_OUT" ]; then
     eval "$CTX_OUT"
-    # Use longer labels for the prompt-level injection
-    LABEL='HEALTHY'
-    [ "${pct:-0}" -ge 40 ] && LABEL='WARMING'
-    [ "${pct:-0}" -ge 70 ] && LABEL='HEAVY'
-    [ "${pct:-0}" -ge 90 ] && LABEL='CRITICAL'
-    echo "Context: ${pct}% (${LABEL}) ~${used_tokens}tok / ${ctx_size}"
+    echo "Context: ${pct}% (${label_long:-UNKNOWN}) ~${used_tokens}tok / ${ctx_size}"
     # Awareness: compaction detection
     COMPACT=$("$AUTONOMY_DIR/awareness/compaction.sh" "$pct" 2>/dev/null) || true
     [ -n "$COMPACT" ] && echo "$COMPACT"

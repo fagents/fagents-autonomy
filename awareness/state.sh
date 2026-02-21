@@ -31,11 +31,7 @@ if [ -n "$CTX_OUT" ]; then
     CTX_PCT="${pct:-0}"
     CTX_TOKENS="${used_tokens:-0}"
     CTX_SIZE="${ctx_size:-0}"
-    # Map short labels to long labels for state file
-    CTX_LABEL="HEALTHY"
-    [ "${CTX_PCT}" -ge 40 ] && CTX_LABEL="WARMING"
-    [ "${CTX_PCT}" -ge 70 ] && CTX_LABEL="HEAVY"
-    [ "${CTX_PCT}" -ge 90 ] && CTX_LABEL="CRITICAL"
+    CTX_LABEL="${label_long:-UNKNOWN}"
 fi
 
 # ── Collect process metadata ──
