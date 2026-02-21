@@ -62,20 +62,27 @@ fi
 TEMPLATE_DIR=""
 declare -A AGENT_SOULS
 declare -A AGENT_BOOTSTRAP
-if [[ -n "$TEMPLATE" ]]; then
-    TEMPLATE_DIR="$SCRIPT_DIR/templates/$TEMPLATE"
-    if [[ ! -f "$TEMPLATE_DIR/team.json" ]]; then
-        echo "ERROR: Template '$TEMPLATE' not found at $TEMPLATE_DIR/team.json" >&2
+
+load_template() {
+    local tdir="$1"
+    if [[ ! -f "$tdir/team.json" ]]; then
+        echo "ERROR: Template not found at $tdir/team.json" >&2
         exit 1
     fi
     while IFS= read -r line; do
         name=$(echo "$line" | jq -r '.name')
+        [[ -z "$name" || "$name" == "null" ]] && continue
         soul=$(echo "$line" | jq -r '.soul // empty')
         is_bootstrap=$(echo "$line" | jq -r '.bootstrap // false')
         AGENTS+=("$name")
         [[ -n "$soul" ]] && AGENT_SOULS["$name"]="$soul"
         [[ "$is_bootstrap" == "true" ]] && AGENT_BOOTSTRAP["$name"]=1
-    done < <(jq -c '.agents[]' "$TEMPLATE_DIR/team.json")
+    done < <(jq -c '.agents[]' "$tdir/team.json")
+}
+
+if [[ -n "$TEMPLATE" ]]; then
+    TEMPLATE_DIR="$SCRIPT_DIR/templates/$TEMPLATE"
+    load_template "$TEMPLATE_DIR"
 fi
 
 # ── Interactive mode ──
@@ -104,18 +111,7 @@ if [[ ${#AGENTS[@]} -eq 0 ]]; then
     prompt TEMPLATE "Choose a template (or 'none' for manual)" "business"
     if [[ "$TEMPLATE" != "none" ]]; then
         TEMPLATE_DIR="$SCRIPT_DIR/templates/$TEMPLATE"
-        if [[ ! -f "$TEMPLATE_DIR/team.json" ]]; then
-            echo "ERROR: Template '$TEMPLATE' not found." >&2
-            exit 1
-        fi
-        while IFS= read -r line; do
-            name=$(echo "$line" | jq -r '.name')
-            soul=$(echo "$line" | jq -r '.soul // empty')
-            is_bootstrap=$(echo "$line" | jq -r '.bootstrap // false')
-            AGENTS+=("$name")
-            [[ -n "$soul" ]] && AGENT_SOULS["$name"]="$soul"
-            [[ "$is_bootstrap" == "true" ]] && AGENT_BOOTSTRAP["$name"]=1
-        done < <(jq -c '.agents[]' "$TEMPLATE_DIR/team.json")
+        load_template "$TEMPLATE_DIR"
     else
         echo "Enter agent names separated by spaces:"
         read -rp "> " agent_input
