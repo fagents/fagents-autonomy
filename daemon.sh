@@ -385,7 +385,7 @@ while true; do
         PROMPT_FILE="$PROMPT_MSG"
         # Extract wake channel from mentions for Stop hook
         export WAKE_CHANNEL
-        WAKE_CHANNEL=$(echo "$WAKE_MENTIONS" | grep -oP '(?<=--- #)\S+' | head -1)
+        WAKE_CHANNEL=$(echo "$WAKE_MENTIONS" | sed -n 's/^--- #\([^ ]*\).*/\1/p' | head -1)
         [ -z "$WAKE_CHANNEL" ] && WAKE_CHANNEL="general"
         log "[$AGENT] Woke on message (channel: $WAKE_CHANNEL)..."
     else

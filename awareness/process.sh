@@ -20,7 +20,7 @@ if [ -n "$CLAUDE_LINE" ]; then
     claude_pid=$(echo "$CLAUDE_LINE" | awk '{print $2}')
     if echo "$CLAUDE_LINE" | grep -q '\-\-resume'; then
         has_resume=true
-        session_id=$(echo "$CLAUDE_LINE" | grep -oP '(?<=--resume )\S+')
+        session_id=$(echo "$CLAUDE_LINE" | sed -n 's/.*--resume \([^ ]*\).*/\1/p')
     fi
 fi
 

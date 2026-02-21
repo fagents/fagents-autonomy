@@ -49,9 +49,9 @@ if [ -n "$MSGS" ]; then
     JUHO_MSGS=$(echo "$MSGS" | grep '\[Juho\]' || true)
     if [ -n "$JUHO_MSGS" ]; then
         LATEST_JUHO=$(echo "$JUHO_MSGS" | tail -1)
-        if echo "$LATEST_JUHO" | grep -qP '\] GO\b'; then
+        if echo "$LATEST_JUHO" | grep -qE '\] GO( |$)'; then
             : # GO cancels PAUSE
-        elif echo "$JUHO_MSGS" | grep -qP '\] PAUSE(\s|$)'; then
+        elif echo "$JUHO_MSGS" | grep -qE '\] PAUSE( |$)'; then
             COMMS_CTX="PAUSE FROM JUHO — STOP NOW. Post state to comms. Wait for GO."
         fi
     fi
@@ -68,12 +68,12 @@ if [ -n "$MSGS" ]; then
         if [ -n "$TEAMMATE_MSGS" ]; then
             PREV_TS=$(cat "$CACHE_DIR/last-alert-ts" 2>/dev/null || echo 0)
             PREV_TS=${PREV_TS:-0}
-            LATEST_TS=$(echo "$TEAMMATE_MSGS" | tail -1 | grep -oP '^\[\K[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}' || true)
+            LATEST_TS=$(echo "$TEAMMATE_MSGS" | tail -1 | sed -n 's/^\[\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\} [0-9]\{2\}:[0-9]\{2\}\).*/\1/p')
             if [ -n "$LATEST_TS" ]; then
                 TEAM_EPOCH=$(date -d "$LATEST_TS" +%s 2>/dev/null || echo 0)
                 if [ "$TEAM_EPOCH" -gt "$PREV_TS" ]; then
                     echo "$TEAM_EPOCH" > "$CACHE_DIR/last-alert-ts"
-                    SENDER=$(echo "$TEAMMATE_MSGS" | tail -1 | grep -oP '\[\K[^\]]+(?=\])' | tail -1 || echo "teammate")
+                    SENDER=$(echo "$TEAMMATE_MSGS" | tail -1 | sed -n 's/.*\[\([^]]*\)\].*/\1/p' || echo "teammate")
                     COMMS_CTX="New message from $SENDER on comms. Check when convenient."
                 fi
             fi
