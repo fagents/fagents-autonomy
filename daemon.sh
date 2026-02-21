@@ -1,7 +1,7 @@
 #!/bin/bash
 # Freeturtle Daemon — autonomous agent loop via Claude Code
 #
-# Usage: AGENT=ftw COMMS_URL=... COMMS_TOKEN=... ./daemon.sh [interval_seconds]
+# Usage: AGENT=<name> COMMS_URL=... COMMS_TOKEN=... ./daemon.sh [interval_seconds]
 #
 # Required env vars:
 #   AGENT                  Agent identity (for logging)
@@ -23,8 +23,8 @@
 #   Stop:   kill $(cat $PROJECT_DIR/.autonomy/daemon.pid)
 #
 # Examples:
-#   AGENT=ftw CHANNELS=general,fagent-dev COMMS_URL=http://127.0.0.1:9754 COMMS_TOKEN=<tok> ./daemon.sh 300
-#   AGENT=ftl COMMS_URL=http://localhost:9754 COMMS_TOKEN=<tok> ./daemon.sh 300
+#   AGENT=ops CHANNELS=general,dev COMMS_URL=http://127.0.0.1:9754 COMMS_TOKEN=<tok> ./daemon.sh 300
+#   AGENT=dev COMMS_URL=http://127.0.0.1:9754 COMMS_TOKEN=<tok> ./daemon.sh 300
 
 set -euo pipefail
 
@@ -39,12 +39,12 @@ if [ -z "$AGENT" ] || [ -z "$COMMS_URL" ] || [ -z "$COMMS_TOKEN" ]; then
     echo "Freeturtle Daemon — autonomous agent loop"
     echo ""
     echo "Required environment variables:"
-    echo "  AGENT        Agent identity (ftw or ftl)"
+    echo "  AGENT        Agent identity (e.g. ops, dev, coo)"
     echo "  COMMS_URL    fagents-comms server URL"
     echo "  COMMS_TOKEN  Agent auth token"
     echo ""
     echo "Usage:"
-    echo "  AGENT=ftl COMMS_URL=http://localhost:9754 COMMS_TOKEN=<token> $0 [interval]"
+    echo "  AGENT=ops COMMS_URL=http://127.0.0.1:9754 COMMS_TOKEN=<token> $0 [interval]"
     exit 1
 fi
 
