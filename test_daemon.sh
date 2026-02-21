@@ -1086,6 +1086,94 @@ assert_contains "$HEALTH_BODY" "no message" "session-stop: empty message — fal
 
 echo ""
 
+# ── inject-awareness.sh tests ──
+
+echo "inject-awareness.sh:"
+
+IA_SCRIPT="$SCRIPT_DIR/hooks/inject-awareness.sh"
+
+# Setup: fake AUTONOMY_DIR with mock awareness scripts
+IA_DIR=$(mktemp -d)
+mkdir -p "$IA_DIR/awareness"
+
+# Mock time.sh
+cat > "$IA_DIR/awareness/time.sh" << 'MOCK'
+#!/bin/bash
+echo "14:30:00 EET"
+MOCK
+chmod +x "$IA_DIR/awareness/time.sh"
+
+# Mock context.sh
+cat > "$IA_DIR/awareness/context.sh" << 'MOCK'
+#!/bin/bash
+echo "pct='55'"
+echo "label='WARM'"
+echo "label_long='WARMING'"
+echo "formatted='55% (WARM)'"
+echo "used_tokens='110000'"
+echo "ctx_size='200000'"
+MOCK
+chmod +x "$IA_DIR/awareness/context.sh"
+
+# Mock compaction.sh (no output = no compaction)
+cat > "$IA_DIR/awareness/compaction.sh" << 'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+chmod +x "$IA_DIR/awareness/compaction.sh"
+
+# Mock comms.sh (no output = no alerts)
+cat > "$IA_DIR/awareness/comms.sh" << 'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+chmod +x "$IA_DIR/awareness/comms.sh"
+
+# Test: full output is valid JSON
+OUTPUT=$(AUTONOMY_DIR="$IA_DIR" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
+echo "$OUTPUT" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null
+assert_eq "0" "$?" "inject-awareness: output is valid JSON"
+
+# Test: output contains time
+assert_contains "$OUTPUT" "14:30:00 EET" "inject-awareness: time in output"
+
+# Test: output contains context formatted
+assert_contains "$OUTPUT" "55% (WARM)" "inject-awareness: context in output"
+
+# Test: output has correct hookEventName
+HOOK_EVENT=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['hookSpecificOutput']['hookEventName'])" 2>/dev/null) || true
+assert_eq "PreToolUse" "$HOOK_EVENT" "inject-awareness: hookEventName=PreToolUse"
+
+# Test: comms alert appended when present
+cat > "$IA_DIR/awareness/comms.sh" << 'MOCK'
+#!/bin/bash
+echo "PAUSE active"
+MOCK
+chmod +x "$IA_DIR/awareness/comms.sh"
+OUTPUT=$(AUTONOMY_DIR="$IA_DIR" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
+assert_contains "$OUTPUT" "PAUSE active" "inject-awareness: comms alert in output"
+
+# Test: compaction warning appended when triggered
+cat > "$IA_DIR/awareness/compaction.sh" << 'MOCK'
+#!/bin/bash
+echo "COMPACTION DETECTED"
+MOCK
+chmod +x "$IA_DIR/awareness/compaction.sh"
+OUTPUT=$(AUTONOMY_DIR="$IA_DIR" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
+assert_contains "$OUTPUT" "COMPACTION DETECTED" "inject-awareness: compaction warning in output"
+
+# Test: no awareness scripts — still valid JSON with empty context
+IA_EMPTY=$(mktemp -d)
+mkdir -p "$IA_EMPTY/awareness"
+OUTPUT=$(AUTONOMY_DIR="$IA_EMPTY" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
+echo "$OUTPUT" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null
+assert_eq "0" "$?" "inject-awareness: no scripts — still valid JSON"
+rm -rf "$IA_EMPTY"
+
+rm -rf "$IA_DIR"
+
+echo ""
+
 # ── Summary ──
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
