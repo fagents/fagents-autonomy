@@ -7,8 +7,8 @@
 # No pre-requisites beyond: git, ssh, curl, jq
 #
 # Can be copied via USB stick or scp:
-#   scp freeturtle@imagine-wonder:~/workspace/fagents-autonomy/install.sh .
-#   bash install.sh
+#   scp user@server:~/fagents-autonomy/install-agent.sh .
+#   bash install-agent.sh
 
 set -euo pipefail
 
@@ -40,9 +40,9 @@ prompt() {
 # ── Gather configuration ──
 prompt AGENT_NAME   "Agent name (short, e.g. FTL, MEM, KID1)"
 prompt WORKSPACE    "Workspace name (e.g. red-team-ftl, fagent-memory-dev)"
-prompt GIT_HOST     "Git server (SSH, or 'local' for no remote)" "freeturtle@imagine-wonder"
+prompt GIT_HOST     "Git server (SSH, or 'local' for no remote)" "local"
 prompt COMMS_URL    "Comms server URL" "http://127.0.0.1:9754"
-prompt AUTONOMY_REPO "fagents-autonomy git repo URL" "ssh://freeturtle@imagine-wonder/home/freeturtle/repos/fagents-autonomy.git"
+prompt AUTONOMY_REPO "fagents-autonomy git repo URL" "https://github.com/fagents/fagents-autonomy.git"
 prompt COMMS_TOKEN  "Existing comms token (leave empty to register new)" ""
 prompt MCP_ENABLED  "Enable MCP tools? (Y/n)" "Y"
 
@@ -282,7 +282,7 @@ elif comms_reachable; then
             echo "  Warning: could not subscribe to general (do it manually)."
     else
         echo "  Warning: registration failed. Error: $RESULT"
-        echo "  You can register manually: ssh imagine-wonder 'cd ~/workspace/fagents-comms && python3 server.py add-agent $AGENT_NAME'"
+        echo "  You can register manually on the comms server: cd fagents-comms && python3 server.py add-agent $AGENT_NAME"
     fi
 else
     echo "  Comms server not reachable at $COMMS_URL — skipping registration."

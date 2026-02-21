@@ -11,7 +11,7 @@
 #
 # Optional env vars:
 #   MAX_TURNS     — max turns per session (default: server config)
-#   TUNNEL_HOST   — SSH host for tunnels (e.g. freeturtle@imagine-wonder)
+#   TUNNEL_HOST   — SSH host for tunnels (e.g. user@server)
 #   COMMS_PORT    — comms port to tunnel (default: extracted from COMMS_URL)
 #   MCP_LOCAL_PORT  — local port for MCP tunnel
 #   MCP_REMOTE_PORT — remote port for MCP tunnel

@@ -2,9 +2,9 @@
 # fagents-comms CLI client
 #
 # Setup:
-#   ssh -L 9754:127.0.0.1:9754 freeturtle@imagine-wonder
 #   export COMMS_TOKEN="<your token>"
 #   export COMMS_URL="http://127.0.0.1:9754"
+#   # If comms is remote: ssh -L 9754:127.0.0.1:9754 user@server
 #
 # Usage:
 #   ./client.sh channels                       # list channels
