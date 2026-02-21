@@ -539,6 +539,114 @@ rm -rf "$CTX_TMP"
 
 echo ""
 
+# ── compaction.sh tests ──
+
+echo "compaction.sh:"
+
+COMPACT_SCRIPT="$SCRIPT_DIR/awareness/compaction.sh"
+COMPACT_TMP=$(mktemp -d)
+export PROJECT_DIR="$COMPACT_TMP"
+mkdir -p "$COMPACT_TMP/.autonomy"
+
+# Test: no argument — silent exit
+OUTPUT=$("$COMPACT_SCRIPT" 2>/dev/null) || true
+assert_empty "$OUTPUT" "no arg: silent exit"
+
+# Test: first call — stores value, no compaction
+rm -f "$COMPACT_TMP/.autonomy/.compact"
+OUTPUT=$("$COMPACT_SCRIPT" 80)
+assert_empty "$OUTPUT" "first call: no compaction (no previous value)"
+STORED=$(cat "$COMPACT_TMP/.autonomy/.compact")
+assert_eq "80" "$STORED" "first call: stores current pct"
+
+# Test: small drop — no compaction
+echo "80" > "$COMPACT_TMP/.autonomy/.compact"
+OUTPUT=$("$COMPACT_SCRIPT" 60)
+assert_empty "$OUTPUT" "20-point drop: no compaction"
+
+# Test: exactly 30-point drop — triggers compaction
+echo "70" > "$COMPACT_TMP/.autonomy/.compact"
+OUTPUT=$("$COMPACT_SCRIPT" 40)
+assert_contains "$OUTPUT" "COMPACTION DETECTED" "30-point drop: triggers compaction"
+
+# Test: 29-point drop — does not trigger
+echo "70" > "$COMPACT_TMP/.autonomy/.compact"
+OUTPUT=$("$COMPACT_SCRIPT" 41)
+assert_empty "$OUTPUT" "29-point drop: no compaction"
+
+# Test: increase in pct — no compaction
+echo "40" > "$COMPACT_TMP/.autonomy/.compact"
+OUTPUT=$("$COMPACT_SCRIPT" 80)
+assert_empty "$OUTPUT" "pct increase: no compaction"
+
+# Test: large drop — includes re-read instructions
+echo "90" > "$COMPACT_TMP/.autonomy/.compact"
+OUTPUT=$("$COMPACT_SCRIPT" 25)
+assert_contains "$OUTPUT" "SOUL.md" "large drop: mentions SOUL.md"
+assert_contains "$OUTPUT" "TEAM.md" "large drop: mentions TEAM.md"
+assert_contains "$OUTPUT" "MEMORY.md" "large drop: mentions MEMORY.md"
+
+# Test: non-numeric input — silent exit
+OUTPUT=$("$COMPACT_SCRIPT" "abc" 2>/dev/null) || true
+assert_empty "$OUTPUT" "non-numeric: silent exit"
+
+rm -rf "$COMPACT_TMP"
+unset PROJECT_DIR
+
+echo ""
+
+# ── has-changed.sh tests ──
+
+echo "has-changed.sh:"
+
+HC_SCRIPT="$SCRIPT_DIR/awareness/has-changed.sh"
+HC_TMP=$(mktemp -d)
+export PROJECT_DIR="$HC_TMP"
+mkdir -p "$HC_TMP/.autonomy"
+
+# Test: no key — exit 2
+"$HC_SCRIPT" 2>/dev/null; RC=$?
+assert_eq "2" "$RC" "no key: exit 2"
+
+# Test: first run — exit 0 (changed)
+echo "hello" > "$HC_TMP/file1.txt"
+rm -f "$HC_TMP/.autonomy/.test-key.hash"
+"$HC_SCRIPT" "test-key" "$HC_TMP/file1.txt"; RC=$?
+assert_eq "0" "$RC" "first run: exit 0 (changed)"
+
+# Test: second run same file — exit 1 (unchanged)
+"$HC_SCRIPT" "test-key" "$HC_TMP/file1.txt"; RC=$?
+assert_eq "1" "$RC" "same file: exit 1 (unchanged)"
+
+# Test: file modified — exit 0 (changed)
+echo "world" > "$HC_TMP/file1.txt"
+"$HC_SCRIPT" "test-key" "$HC_TMP/file1.txt"; RC=$?
+assert_eq "0" "$RC" "modified file: exit 0 (changed)"
+
+# Test: multiple files — detects change in any
+echo "aaa" > "$HC_TMP/a.txt"
+echo "bbb" > "$HC_TMP/b.txt"
+rm -f "$HC_TMP/.autonomy/.multi-key.hash"
+"$HC_SCRIPT" "multi-key" "$HC_TMP/a.txt" "$HC_TMP/b.txt"; RC=$?
+assert_eq "0" "$RC" "multi first run: exit 0"
+"$HC_SCRIPT" "multi-key" "$HC_TMP/a.txt" "$HC_TMP/b.txt"; RC=$?
+assert_eq "1" "$RC" "multi unchanged: exit 1"
+echo "ccc" > "$HC_TMP/b.txt"
+"$HC_SCRIPT" "multi-key" "$HC_TMP/a.txt" "$HC_TMP/b.txt"; RC=$?
+assert_eq "0" "$RC" "multi one changed: exit 0"
+
+# Test: missing file — skipped silently, no error
+rm -f "$HC_TMP/.autonomy/.miss-key.hash"
+"$HC_SCRIPT" "miss-key" "$HC_TMP/a.txt" "$HC_TMP/nonexistent.txt"; RC=$?
+assert_eq "0" "$RC" "missing file: first run still exit 0"
+"$HC_SCRIPT" "miss-key" "$HC_TMP/a.txt" "$HC_TMP/nonexistent.txt"; RC=$?
+assert_eq "1" "$RC" "missing file: second run unchanged exit 1"
+
+rm -rf "$HC_TMP"
+unset PROJECT_DIR
+
+echo ""
+
 # ── Summary ──
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
