@@ -65,6 +65,7 @@ start_mock_server() {
     echo '{"channels": ["general", "dm-test"]}' > "$MOCK_DIR/channels.json"
     echo '{"channel": "general", "count": 2, "messages": [{"ts": "2026-02-21 10:00", "sender": "Juho", "message": "hello"}, {"ts": "2026-02-21 10:01", "sender": "FTF", "message": "hi"}]}' > "$MOCK_DIR/messages.json"
     echo '[{"name": "general", "message_count": 42}, {"name": "dm-test", "message_count": 5}]' > "$MOCK_DIR/channels-list.json"
+    echo '{"agent": "TestAgent"}' > "$MOCK_DIR/whoami.json"
 
     python3 -c "
 import http.server, os, sys
@@ -87,6 +88,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._serve('messages.json')
         elif path == '/api/channels':
             self._serve('channels-list.json')
+        elif path == '/api/whoami':
+            self._serve('whoami.json')
         elif path == '/health':
             self.send_response(200)
             self.end_headers()
@@ -166,7 +169,7 @@ print('WAKE_MODE=\"\"')
 print('_ENV_WAKE_MODE=\"\"')
 print()
 
-funcs = ['refresh_channels', 'fetch_config', 'fetch_unread', 'wait_for_wake', 'read_prompt']
+funcs = ['refresh_channels', 'fetch_config', 'fetch_unread', 'wait_for_wake', 'read_prompt', 'check_comms']
 for name in funcs:
     pattern = rf'^{name}\(\) \{{.*?^\}}'
     match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
@@ -190,6 +193,10 @@ export COMMS_TOKEN="test-token"
 export AGENT="TestAgent"
 
 eval "$(extract_functions)"
+
+# Stub for functions that call log()
+DAEMON_LOG=$(mktemp)
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $1" >> "$DAEMON_LOG"; }
 
 # ── fetch_unread tests ──
 
@@ -572,6 +579,41 @@ OUTPUT=$("$CLIENT_SCRIPT" help 2>/dev/null)
 assert_contains "$OUTPUT" "Usage" "help: shows usage"
 assert_contains "$OUTPUT" "fetch" "help: lists fetch command"
 assert_contains "$OUTPUT" "send" "help: lists send command"
+
+echo ""
+
+# ── check_comms tests ──
+
+echo "check_comms():"
+
+# Test: returns 0 when server is reachable
+set_mock_response "whoami" '{"agent": "TestAgent"}'
+check_comms; RC=$?
+assert_eq "0" "$RC" "returns 0 when comms reachable"
+
+# Test: returns 1 when server returns empty agent
+set_mock_response "whoami" '{"agent": ""}'
+check_comms; RC=$?
+assert_eq "1" "$RC" "returns 1 when agent name empty"
+
+# Test: returns 1 when server returns invalid JSON
+set_mock_response "whoami" 'not json'
+check_comms; RC=$?
+assert_eq "1" "$RC" "returns 1 when server returns bad JSON"
+
+# Test: returns 0 when comms not configured (skips check)
+SAVE_URL="$COMMS_URL"
+unset COMMS_URL
+check_comms; RC=$?
+assert_eq "0" "$RC" "returns 0 when COMMS_URL not set (skips)"
+export COMMS_URL="$SAVE_URL"
+
+# Test: logs warning on unreachable server
+> "$DAEMON_LOG"
+set_mock_response "whoami" '{"agent": ""}'
+check_comms || true
+LOG_CONTENT=$(cat "$DAEMON_LOG")
+assert_contains "$LOG_CONTENT" "WARNING" "logs WARNING on unreachable"
 
 echo ""
 
