@@ -9,7 +9,7 @@ without credentials ever entering the LLM context.
 Agent (Claude Code)
   ↓ native MCP tool call: send_email(to, subject, body)
   ↓ transport: Streamable HTTP
-MCP Server (other-things, on imagine-wonder)
+MCP Server (other-things, on shared-server)
   ↓ reads creds from .env
   ↓ executes action (SMTP, API call, etc.)
   ↓ returns result only
@@ -18,7 +18,7 @@ Agent never sees: SMTP password, API keys, tokens
 ```
 
 **Key security property:** Service credentials live only in the MCP
-server's `.env` file on imagine-wonder. The agent's API key for MCP
+server's `.env` file on shared-server. The agent's API key for MCP
 auth lives in `settings.json` on disk — Claude Code handles transport
 and never exposes it to the LLM context.
 
@@ -60,7 +60,7 @@ alongside them.
 ```
 
 The agent reaches the MCP server via SSH tunnel (port 9755 on
-localhost → imagine-wonder). Same pattern as fagents-comms (port 9754).
+localhost → shared-server). Same pattern as fagents-comms (port 9754).
 
 ## Install-Time Setup
 
@@ -83,9 +83,9 @@ ensure_tunnel "$COMMS_PORT" "$TUNNEL_HOST"
 ensure_tunnel "9755" "$TUNNEL_HOST"
 ```
 
-## Server Deployment (imagine-wonder)
+## Server Deployment (shared-server)
 
-1. Clone other-things to imagine-wonder workspace
+1. Clone other-things to shared-server workspace
 2. `npm install` (requires Node 20+)
 3. Create `.env` with service credentials (SMTP, API keys, etc.)
 4. Set `MCP_API_KEY` in `.env` (shared key for all agents, or
@@ -98,7 +98,7 @@ ensure_tunnel "9755" "$TUNNEL_HOST"
 
 | Secret | Where it lives | Who can see it |
 |--------|---------------|----------------|
-| Service creds (SMTP, API keys) | `.env` on imagine-wonder | Only MCP server process |
+| Service creds (SMTP, API keys) | `.env` on shared-server | Only MCP server process |
 | MCP API key | `settings.json` on each agent machine | On disk only — not in LLM context |
 | COMMS_TOKEN | env var in daemon | In agent env, not in LLM context by default |
 

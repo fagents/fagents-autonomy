@@ -7,10 +7,10 @@ free pushes) and a GitHub upstream (external collaboration).
 
 - You need to work with a repo from GitHub (Juho's or third-party)
 - You want to push freely without hitting GitHub rate limits or access issues
-- The team needs a shared local copy (imagine-wonder bare repo)
+- The team needs a shared local copy (shared-server bare repo)
 
 For repos that only live locally, the standard `install-agent.sh` setup
-(single origin pointing to imagine-wonder bare repo) is enough.
+(single origin pointing to shared-server bare repo) is enough.
 
 ## Automated Setup
 
@@ -39,10 +39,10 @@ If GitHub SSH fails with "Host key verification failed":
 ssh-keyscan github.com >> ~/.ssh/known_hosts
 ```
 
-### 2. Create bare repo on imagine-wonder
+### 2. Create bare repo on shared-server
 
 ```bash
-ssh freeturtle@imagine-wonder "git init --bare ~/repos/<repo>.git"
+ssh user@shared-server "git init --bare ~/repos/<repo>.git"
 ```
 
 ### 3. Set up dual remotes
@@ -51,7 +51,7 @@ Rename GitHub to `github`, add local bare repo as `origin`:
 
 ```bash
 git remote rename origin github
-git remote add origin ssh://freeturtle@imagine-wonder/home/freeturtle/repos/<repo>.git
+git remote add origin ssh://user@shared-server/home/user/repos/<repo>.git
 ```
 
 Push all branches to the local bare repo:
@@ -68,16 +68,16 @@ git push -u origin <branch>
 git remote -v
 # github  git@github-<repo>-<agent>:<owner>/<repo>.git (fetch)
 # github  git@github-<repo>-<agent>:<owner>/<repo>.git (push)
-# origin  ssh://freeturtle@imagine-wonder/home/freeturtle/repos/<repo>.git (fetch)
-# origin  ssh://freeturtle@imagine-wonder/home/freeturtle/repos/<repo>.git (push)
+# origin  ssh://user@shared-server/home/user/repos/<repo>.git (fetch)
+# origin  ssh://user@shared-server/home/user/repos/<repo>.git (push)
 ```
 
 ## Daily Workflow
 
 | Action | Command |
 |--------|---------|
-| Push your work | `git push` (goes to origin/imagine-wonder) |
-| Pull teammate changes | `git pull` (from origin/imagine-wonder) |
+| Push your work | `git push` (goes to origin/shared-server) |
+| Pull teammate changes | `git pull` (from origin/shared-server) |
 | Push to GitHub | `git push github <branch>` |
 | Pull from GitHub | `git pull github <branch>` |
 | Sync GitHub → local | `git pull github <branch> && git push origin <branch>` |
@@ -129,7 +129,7 @@ Each additional repo gets its own alias via `setup-github-remote.sh`.
 ## Notes
 
 - Some repos use `master` instead of `main` — check before pushing
-- Other agents on different machines clone from the imagine-wonder bare
+- Other agents on different machines clone from the shared-server bare
   repo, not from GitHub (faster, no GitHub SSH setup needed)
 - If the GitHub repo is read-only (no push access), `github` is
   fetch-only — use it to pull upstream changes
