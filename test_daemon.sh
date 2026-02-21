@@ -62,6 +62,7 @@ start_mock_server() {
     echo '{"total": 100, "unread": 0, "channels": 3}' > "$MOCK_DIR/poll.json"
     echo '{"channels": []}' > "$MOCK_DIR/unread.json"
     echo '{"agent": "TestAgent", "config": {"wake_mode": "mentions", "poll_interval": 1}}' > "$MOCK_DIR/config.json"
+    echo '{"channels": ["general", "dm-test"]}' > "$MOCK_DIR/channels.json"
 
     python3 -c "
 import http.server, os, sys
@@ -78,6 +79,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._serve('unread.json')
         elif path.startswith('/api/agents/') and path.endswith('/config'):
             self._serve('config.json')
+        elif path.startswith('/api/agents/') and path.endswith('/channels'):
+            self._serve('channels.json')
         elif path == '/health':
             self.send_response(200)
             self.end_headers()
@@ -145,7 +148,7 @@ print('WAKE_MODE=\"\"')
 print('_ENV_WAKE_MODE=\"\"')
 print()
 
-funcs = ['fetch_config', 'fetch_unread', 'wait_for_wake', 'read_prompt']
+funcs = ['refresh_channels', 'fetch_config', 'fetch_unread', 'wait_for_wake', 'read_prompt']
 for name in funcs:
     pattern = rf'^{name}\(\) \{{.*?^\}}'
     match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
@@ -460,6 +463,52 @@ OUTPUT=$(read_prompt "nonexistent.md" 2>/dev/null)
 assert_contains "$OUTPUT" "prompt file missing" "missing prompt file returns error"
 
 rm -rf "$TEST_PROMPTS_DIR"
+
+echo ""
+
+# ── refresh_channels tests ──
+
+echo "refresh_channels():"
+
+# Test: fetches channels from server
+CH_ARRAY=("old-channel")
+set_mock_response "channels" '{"channels": ["general", "dm-test", "dev"]}'
+refresh_channels; RC=$?
+assert_eq "0" "$RC" "returns 0 on success"
+assert_eq "3" "${#CH_ARRAY[@]}" "populates CH_ARRAY with 3 channels"
+assert_eq "general" "${CH_ARRAY[0]}" "first channel is general"
+assert_eq "dm-test" "${CH_ARRAY[1]}" "second channel is dm-test"
+assert_eq "dev" "${CH_ARRAY[2]}" "third channel is dev"
+
+# Test: single channel
+set_mock_response "channels" '{"channels": ["only-one"]}'
+refresh_channels; RC=$?
+assert_eq "0" "$RC" "single channel: returns 0"
+assert_eq "1" "${#CH_ARRAY[@]}" "single channel: CH_ARRAY has 1 entry"
+assert_eq "only-one" "${CH_ARRAY[0]}" "single channel: correct name"
+
+# Test: empty channels array — keeps old CH_ARRAY (fallback)
+CH_ARRAY=("keep-me")
+set_mock_response "channels" '{"channels": []}'
+refresh_channels; RC=$?
+assert_eq "1" "$RC" "empty channels: returns 1 (fallback)"
+assert_eq "keep-me" "${CH_ARRAY[0]}" "empty channels: CH_ARRAY unchanged"
+
+# Test: no comms configured — returns 1, keeps old CH_ARRAY
+CH_ARRAY=("preserved")
+SAVE_URL="$COMMS_URL"
+unset COMMS_URL
+refresh_channels; RC=$?
+assert_eq "1" "$RC" "no comms: returns 1"
+assert_eq "preserved" "${CH_ARRAY[0]}" "no comms: CH_ARRAY unchanged"
+export COMMS_URL="$SAVE_URL"
+
+# Test: server returns no channels key — fallback
+CH_ARRAY=("fallback")
+set_mock_response "channels" '{"error": "not found"}'
+refresh_channels; RC=$?
+assert_eq "1" "$RC" "no channels key: returns 1"
+assert_eq "fallback" "${CH_ARRAY[0]}" "no channels key: CH_ARRAY unchanged"
 
 echo ""
 
