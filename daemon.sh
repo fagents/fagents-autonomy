@@ -147,7 +147,7 @@ read_prompt() {
         [ -n "${AUTONOMY_DIR:-}" ] && client_cmd="$AUTONOMY_DIR/comms/client.sh"
         local block=""
         for ch in "${CH_ARRAY[@]}"; do
-            block="${block}  $client_cmd read $ch --since ${since}"$'\n'
+            block="${block}  $client_cmd fetch $ch --since ${since}"$'\n'
         done
         block="${block}Reply via:"$'\n'
         for ch in "${CH_ARRAY[@]}"; do
