@@ -35,7 +35,7 @@ assert_eq() {
 
 assert_contains() {
     local haystack="$1" needle="$2" msg="$3"
-    if echo "$haystack" | grep -qF "$needle"; then
+    if echo "$haystack" | grep -qF -- "$needle"; then
         pass "$msg"
     else
         fail "$msg (expected to contain '$needle')"
@@ -145,7 +145,7 @@ print('WAKE_MODE=\"\"')
 print('_ENV_WAKE_MODE=\"\"')
 print()
 
-funcs = ['fetch_config', 'fetch_unread', 'wait_for_wake']
+funcs = ['fetch_config', 'fetch_unread', 'wait_for_wake', 'read_prompt']
 for name in funcs:
     pattern = rf'^{name}\(\) \{{.*?^\}}'
     match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
@@ -390,6 +390,76 @@ assert_eq "1" "$RC" "mentions mode: ignores non-mention messages"
 
 # Reset
 WAKE_MODE=""
+
+echo ""
+
+# ── read_prompt tests ──
+
+echo "read_prompt():"
+
+# Set up temp prompts directory with test templates
+TEST_PROMPTS_DIR=$(mktemp -d)
+PROMPTS_DIR="$TEST_PROMPTS_DIR"
+
+# Template with both placeholders
+cat > "$TEST_PROMPTS_DIR/test.md" << 'TMPL'
+Check channels:
+{{CHANNELS_BLOCK}}
+{{MENTIONS_BLOCK}}
+Done.
+TMPL
+
+# Test: channels block uses 'fetch' not 'read'
+CH_ARRAY=("general" "dm-test")
+INTERVAL=300
+WAKE_MENTIONS=""
+AUTONOMY_DIR=""
+OUTPUT=$(read_prompt "test.md")
+assert_contains "$OUTPUT" "fetch general" "channels block uses 'fetch' subcommand"
+assert_contains "$OUTPUT" "fetch dm-test" "channels block includes all channels"
+assert_contains "$OUTPUT" "send general" "reply block includes send commands"
+assert_contains "$OUTPUT" "send dm-test" "reply block includes all channels for send"
+
+# Test: mentions block injected when WAKE_MENTIONS is set
+WAKE_MENTIONS="--- #general (1 mentions) ---
+[2026-02-17 16:00] [Juho] hey"
+OUTPUT=$(read_prompt "test.md")
+assert_contains "$OUTPUT" "Messages that triggered this wake" "mentions header injected"
+assert_contains "$OUTPUT" "#general (1 mentions)" "mentions content injected"
+
+# Test: mentions block removed when empty
+WAKE_MENTIONS=""
+OUTPUT=$(read_prompt "test.md")
+if echo "$OUTPUT" | grep -qF "Messages that triggered"; then
+    fail "mentions block should be removed when empty"
+else
+    pass "mentions block removed when WAKE_MENTIONS empty"
+fi
+
+# Test: --since uses interval-based calculation for non-msg prompts
+INTERVAL=300
+CH_ARRAY=("general")
+OUTPUT=$(read_prompt "test.md")
+assert_contains "$OUTPUT" "--since 60m" "non-msg prompt uses interval-based --since (min 60m)"
+
+# Test: --since uses 10m for msg prompts
+cat > "$TEST_PROMPTS_DIR/test-msg.md" << 'TMPL'
+{{CHANNELS_BLOCK}}
+TMPL
+OUTPUT=$(read_prompt "test-msg.md")
+assert_contains "$OUTPUT" "--since 10m" "msg prompt uses --since 10m"
+
+# Test: AUTONOMY_DIR overrides client path
+AUTONOMY_DIR="/custom/path"
+OUTPUT=$(read_prompt "test.md")
+assert_contains "$OUTPUT" "/custom/path/comms/client.sh" "AUTONOMY_DIR overrides client path"
+AUTONOMY_DIR=""
+
+# Test: missing prompt file
+OUTPUT=$(read_prompt "nonexistent.md" 2>/dev/null)
+assert_contains "$OUTPUT" "prompt file missing" "missing prompt file returns error"
+
+rm -rf "$TEST_PROMPTS_DIR"
 
 echo ""
 
