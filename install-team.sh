@@ -2,21 +2,24 @@
 # install-team.sh — Provision a team of agents on one machine (colocated mode)
 #
 # Usage: sudo ./install-team.sh [options] AGENT1 AGENT2 ...
+#    or: sudo ./install-team.sh --template business --comms-repo URL
 #
 # Each AGENT can be NAME or NAME:WORKSPACE
 #   NAME only:       workspace defaults to dev-team-<name lowercase>
 #   NAME:WORKSPACE:  explicit workspace name
 #
 # Options:
+#   --template NAME         Use a team template (e.g., business)
 #   --comms-port PORT       Comms server port (default: 9754)
 #   --comms-repo URL        fagents-comms git repo URL
 #   --mcp-port PORT         MCP local port (enables MCP for all agents)
 #
-# The first agent listed is the "bootstrap" agent — its user account
+# The first agent listed (or the one marked "bootstrap" in the template)
 # runs the comms server. All agents connect via localhost.
 #
 # Example:
-#   sudo ./install-team.sh FTF:dev-team-ftf FTW:dev-team-ftw FTL
+#   sudo ./install-team.sh --template business --comms-repo https://github.com/fagents/fagents-comms.git
+#   sudo ./install-team.sh --comms-repo URL FTF:dev-team-ftf FTW:dev-team-ftw FTL
 #
 # Prerequisites: git, python3, curl, jq
 
@@ -26,6 +29,7 @@ set -euo pipefail
 COMMS_PORT=9754
 COMMS_REPO=""
 MCP_PORT=""
+TEMPLATE=""
 AGENTS=()
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,6 +38,7 @@ AUTONOMY_REPO="file://$SCRIPT_DIR"
 # ── Parse args ──
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --template)     TEMPLATE="$2"; shift 2 ;;
         --comms-port)   COMMS_PORT="$2"; shift 2 ;;
         --comms-repo)   COMMS_REPO="$2"; shift 2 ;;
         --mcp-port)     MCP_PORT="$2"; shift 2 ;;
@@ -46,8 +51,32 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ── Load template if specified ──
+TEMPLATE_DIR=""
+declare -A AGENT_SOULS
+if [[ -n "$TEMPLATE" ]]; then
+    TEMPLATE_DIR="$SCRIPT_DIR/templates/$TEMPLATE"
+    if [[ ! -f "$TEMPLATE_DIR/team.json" ]]; then
+        echo "ERROR: Template '$TEMPLATE' not found at $TEMPLATE_DIR/team.json" >&2
+        exit 1
+    fi
+    # Read agents from team.json (requires jq)
+    while IFS= read -r line; do
+        name=$(echo "$line" | jq -r '.name')
+        soul=$(echo "$line" | jq -r '.soul // empty')
+        is_bootstrap=$(echo "$line" | jq -r '.bootstrap // false')
+        AGENTS+=("$name")
+        [[ -n "$soul" ]] && AGENT_SOULS["$name"]="$soul"
+        # Put bootstrap agent first
+        if [[ "$is_bootstrap" == "true" && ${#AGENTS[@]} -gt 1 ]]; then
+            AGENTS=("$name" "${AGENTS[@]:0:${#AGENTS[@]}-1}")
+        fi
+    done < <(jq -c '.agents[]' "$TEMPLATE_DIR/team.json")
+fi
+
 if [[ ${#AGENTS[@]} -eq 0 ]]; then
     echo "Usage: sudo $0 [options] AGENT1 AGENT2 ..."
+    echo "       sudo $0 --template business --comms-repo URL"
     echo "Run with --help for details."
     exit 1
 fi
@@ -80,7 +109,7 @@ done
 BOOTSTRAP="${AGENT_NAMES[0]}"
 
 agent_user() {
-    echo "agent-$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+    echo "$(echo "$1" | tr '[:upper:]' '[:lower:]')"
 }
 
 BOOTSTRAP_USER=$(agent_user "$BOOTSTRAP")
@@ -190,6 +219,23 @@ for name in "${AGENT_NAMES[@]}"; do
         export MCP_REMOTE_PORT='$MCP_REMOTE_PORT_VAL'
         bash ~/workspace/fagents-autonomy/install-agent.sh
     " 2>&1 | sed 's/^/  /'
+
+    # Copy template files (TEAM.md + soul) into agent workspace
+    if [[ -n "$TEMPLATE_DIR" ]]; then
+        agent_home=$(eval echo "~$user")
+        agent_ws="$agent_home/workspace/$ws"
+        if [[ -f "$TEMPLATE_DIR/TEAM.md" ]]; then
+            cp "$TEMPLATE_DIR/TEAM.md" "$agent_ws/TEAM.md"
+            chown "$user:fagent" "$agent_ws/TEAM.md"
+            echo "  Copied TEAM.md"
+        fi
+        soul_file="${AGENT_SOULS[$name]:-}"
+        if [[ -n "$soul_file" && -f "$TEMPLATE_DIR/souls/$soul_file" ]]; then
+            cp "$TEMPLATE_DIR/souls/$soul_file" "$agent_ws/SOUL.md"
+            chown "$user:fagent" "$agent_ws/SOUL.md"
+            echo "  Copied SOUL.md (from $soul_file)"
+        fi
+    fi
 
     echo ""
 done
