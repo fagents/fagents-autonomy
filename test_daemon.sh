@@ -63,6 +63,8 @@ start_mock_server() {
     echo '{"channels": []}' > "$MOCK_DIR/unread.json"
     echo '{"agent": "TestAgent", "config": {"wake_mode": "mentions", "poll_interval": 1}}' > "$MOCK_DIR/config.json"
     echo '{"channels": ["general", "dm-test"]}' > "$MOCK_DIR/channels.json"
+    echo '{"channel": "general", "count": 2, "messages": [{"ts": "2026-02-21 10:00", "sender": "Juho", "message": "hello"}, {"ts": "2026-02-21 10:01", "sender": "FTF", "message": "hi"}]}' > "$MOCK_DIR/messages.json"
+    echo '[{"name": "general", "message_count": 42}, {"name": "dm-test", "message_count": 5}]' > "$MOCK_DIR/channels-list.json"
 
     python3 -c "
 import http.server, os, sys
@@ -81,6 +83,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._serve('config.json')
         elif path.startswith('/api/agents/') and path.endswith('/channels'):
             self._serve('channels.json')
+        elif path.startswith('/api/channels/') and path.endswith('/messages') or '/messages?' in self.path:
+            self._serve('messages.json')
+        elif path == '/api/channels':
+            self._serve('channels-list.json')
         elif path == '/health':
             self.send_response(200)
             self.end_headers()
@@ -99,6 +105,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(data.encode())
         else:
             self.send_response(500)
+            self.end_headers()
+    def do_POST(self):
+        path = self.path.split('?')[0]
+        length = int(self.headers.get('Content-Length', 0))
+        self.rfile.read(length)
+        if path.startswith('/api/channels/') and path.endswith('/messages'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"ok": true}')
+        else:
+            self.send_response(404)
             self.end_headers()
     def log_message(self, *args):
         pass
@@ -509,6 +527,51 @@ set_mock_response "channels" '{"error": "not found"}'
 refresh_channels; RC=$?
 assert_eq "1" "$RC" "no channels key: returns 1"
 assert_eq "fallback" "${CH_ARRAY[0]}" "no channels key: CH_ARRAY unchanged"
+
+echo ""
+
+# ── client.sh tests ──
+
+echo "client.sh:"
+
+CLIENT_SCRIPT="$SCRIPT_DIR/comms/client.sh"
+
+# Test: fetch formats output correctly
+set_mock_response "messages" '{"channel": "general", "count": 2, "messages": [{"ts": "2026-02-21 10:00", "sender": "Juho", "message": "hello"}, {"ts": "2026-02-21 10:01", "sender": "FTF", "message": "hi"}]}'
+OUTPUT=$("$CLIENT_SCRIPT" fetch general 2>/dev/null)
+assert_contains "$OUTPUT" "[Juho] hello" "fetch: formats sender and message"
+assert_contains "$OUTPUT" "[2026-02-21 10:00]" "fetch: formats timestamp"
+
+# Test: read shows deprecation warning
+STDERR=$("$CLIENT_SCRIPT" read general 2>&1 >/dev/null)
+assert_contains "$STDERR" "deprecated" "read: shows deprecation warning"
+
+# Test: send missing args — error
+OUTPUT=$("$CLIENT_SCRIPT" send 2>&1) || true
+assert_contains "$OUTPUT" "Usage" "send: missing args shows usage"
+
+# Test: no token — error
+SAVE_TOKEN="$COMMS_TOKEN"
+unset COMMS_TOKEN
+OUTPUT=$("$CLIENT_SCRIPT" fetch general 2>&1) || true
+assert_contains "$OUTPUT" "COMMS_TOKEN" "no token: error mentions COMMS_TOKEN"
+export COMMS_TOKEN="$SAVE_TOKEN"
+
+# Test: channels lists channels
+set_mock_response "channels-list" '[{"name": "general", "message_count": 42}]'
+OUTPUT=$("$CLIENT_SCRIPT" channels 2>/dev/null)
+assert_contains "$OUTPUT" "#general" "channels: shows channel name"
+assert_contains "$OUTPUT" "42 msgs" "channels: shows message count"
+
+# Test: send succeeds
+OUTPUT=$("$CLIENT_SCRIPT" send general "test message" 2>/dev/null)
+assert_contains "$OUTPUT" "ok" "send: returns ok"
+
+# Test: help shows usage
+OUTPUT=$("$CLIENT_SCRIPT" help 2>/dev/null)
+assert_contains "$OUTPUT" "Usage" "help: shows usage"
+assert_contains "$OUTPUT" "fetch" "help: lists fetch command"
+assert_contains "$OUTPUT" "send" "help: lists send command"
 
 echo ""
 
