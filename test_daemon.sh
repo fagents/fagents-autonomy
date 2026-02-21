@@ -1174,6 +1174,84 @@ rm -rf "$IA_DIR"
 
 echo ""
 
+# ── comms.sh (awareness) tests ──
+
+echo "comms.sh (awareness):"
+
+COMMS_SCRIPT="$SCRIPT_DIR/awareness/comms.sh"
+
+# Setup: fake AUTONOMY_DIR with mock client.sh
+CS_DIR=$(mktemp -d)
+mkdir -p "$CS_DIR/comms"
+CS_CACHE=$(mktemp -d)
+
+# Helper to create mock client that returns given text
+set_mock_client() {
+    local text="$1"
+    cat > "$CS_DIR/comms/client.sh" << MOCK
+#!/bin/bash
+echo "$text"
+MOCK
+    chmod +x "$CS_DIR/comms/client.sh"
+    # Clear cache so each test gets a fresh check
+    rm -rf "$CS_CACHE"/*
+}
+
+# Patch comms.sh to use our cache dir (sed on a temp copy)
+CS_TEST=$(mktemp)
+sed "s|CACHE_DIR=\"/tmp/.comms-check\"|CACHE_DIR=\"$CS_CACHE\"|" "$COMMS_SCRIPT" > "$CS_TEST"
+chmod +x "$CS_TEST"
+
+# Test: PAUSE from Juho — triggers alert
+set_mock_client '[2026-02-21 23:00 EET] [Juho] PAUSE'
+OUTPUT=$(AUTONOMY_DIR="$CS_DIR" CHANNELS="general" AGENT="FTF" bash "$CS_TEST" 2>/dev/null) || true
+assert_contains "$OUTPUT" "PAUSE FROM JUHO" "comms.sh: PAUSE from Juho triggers alert"
+
+# Test: GO after PAUSE — no PAUSE alert (teammate msg alert is separate)
+set_mock_client '[2026-02-21 23:00 EET] [Juho] PAUSE
+[2026-02-21 23:01 EET] [Juho] GO'
+OUTPUT=$(AUTONOMY_DIR="$CS_DIR" CHANNELS="general" AGENT="FTF" bash "$CS_TEST" 2>/dev/null) || true
+if echo "$OUTPUT" | grep -qF "PAUSE FROM JUHO"; then
+    fail "comms.sh: GO cancels PAUSE (PAUSE alert still present)"
+else
+    pass "comms.sh: GO cancels PAUSE"
+fi
+
+# Test: teammate message — triggers alert
+set_mock_client '[2026-02-21 23:00 EET] [FTW] Hello team'
+OUTPUT=$(AUTONOMY_DIR="$CS_DIR" CHANNELS="general" AGENT="FTF" bash "$CS_TEST" 2>/dev/null) || true
+assert_contains "$OUTPUT" "New message from FTW" "comms.sh: teammate message triggers alert"
+
+# Test: own message filtered out
+set_mock_client '[2026-02-21 23:00 EET] [FTF] My own message'
+OUTPUT=$(AUTONOMY_DIR="$CS_DIR" CHANNELS="general" AGENT="FTF" bash "$CS_TEST" 2>/dev/null) || true
+assert_empty "$OUTPUT" "comms.sh: own messages filtered out"
+
+# Test: no messages — no output
+set_mock_client ''
+OUTPUT=$(AUTONOMY_DIR="$CS_DIR" CHANNELS="general" AGENT="FTF" bash "$CS_TEST" 2>/dev/null) || true
+assert_empty "$OUTPUT" "comms.sh: no messages — silent"
+
+# Test: no client — silent exit
+CS_NOCLIENT=$(mktemp -d)
+mkdir -p "$CS_NOCLIENT/comms"
+OUTPUT=$(AUTONOMY_DIR="$CS_NOCLIENT" CHANNELS="general" bash "$CS_TEST" 2>/dev/null) || true
+assert_empty "$OUTPUT" "comms.sh: no client — silent exit"
+rm -rf "$CS_NOCLIENT"
+
+# Test: PAUSE mid-word doesn't trigger PAUSE alert (requires word boundary)
+set_mock_client '[2026-02-21 23:00 EET] [Juho] PAUSED for lunch'
+OUTPUT=$(AUTONOMY_DIR="$CS_DIR" CHANNELS="general" AGENT="FTF" bash "$CS_TEST" 2>/dev/null) || true
+if echo "$OUTPUT" | grep -qF "PAUSE FROM JUHO"; then
+    fail "comms.sh: PAUSED (not PAUSE) — false PAUSE alert"
+else
+    pass "comms.sh: PAUSED (not PAUSE) — no PAUSE alert"
+fi
+
+rm -rf "$CS_DIR" "$CS_CACHE" "$CS_TEST"
+
+echo ""
+
 # ── Summary ──
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
