@@ -87,6 +87,8 @@ if [[ -d "$AUTONOMY_DIR" ]]; then
     git -C "$AUTONOMY_DIR" pull --quiet 2>/dev/null || echo "  (pull failed, using existing)"
 else
     echo "  Cloning fagents-autonomy..."
+    # Allow cloning from shared repo owned by a different user
+    git config --global --add safe.directory "$AUTONOMY_REPO"
     git clone "$AUTONOMY_REPO" "$AUTONOMY_DIR"
 fi
 echo "  Done."
