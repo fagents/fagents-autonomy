@@ -207,13 +207,26 @@ echo ""
 # ── Step 2: Set up infra (comms + git repos) ──
 echo "=== Step 2: Infrastructure (under $INFRA_USER) ==="
 
-# Clone fagents-comms
+# Clone fagents-comms (shared copy, detached from GitHub)
 COMMS_DIR="$INFRA_HOME/fagents-comms"
 if [[ -d "$COMMS_DIR" ]]; then
     echo "  fagents-comms already at $COMMS_DIR"
 else
     su - "$INFRA_USER" -c "git clone '$COMMS_REPO' ~/fagents-comms && git -C ~/fagents-comms remote remove origin" 2>&1 | sed 's/^/  /'
 fi
+
+# Clone fagents-autonomy (shared copy, detached from GitHub)
+# Agents clone from this local copy instead of GitHub
+SHARED_AUTONOMY="$INFRA_HOME/fagents-autonomy"
+if [[ -d "$SHARED_AUTONOMY" ]]; then
+    echo "  fagents-autonomy already at $SHARED_AUTONOMY"
+else
+    su - "$INFRA_USER" -c "git clone '$AUTONOMY_REPO' ~/fagents-autonomy && git -C ~/fagents-autonomy remote remove origin" 2>&1 | sed 's/^/  /'
+fi
+# Make readable so agents can clone from it
+chmod -R g+rX "$SHARED_AUTONOMY"
+# Agents now clone from the local shared copy
+AUTONOMY_REPO="$SHARED_AUTONOMY"
 
 # Create bare git repos for each agent
 REPOS_DIR="$INFRA_HOME/repos"
