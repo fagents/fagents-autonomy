@@ -165,7 +165,7 @@ echo "  Comms:       127.0.0.1:$COMMS_PORT"
 for name in "${AGENTS[@]}"; do
     if [[ -n "${AGENT_BOOTSTRAP[$name]:-}" ]]; then
         echo ""
-        echo "  WARNING: $name will have SUDO access (bootstrap/ops agent)"
+        echo "  WARNING: $name WILL HAVE SUDO. It can break your system. Mistakes will happen."
     fi
 done
 
