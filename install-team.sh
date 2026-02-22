@@ -13,7 +13,7 @@
 #   --comms-port PORT       Comms server port (default: 9754)
 #   --comms-repo URL        fagents-comms git repo URL (default: GitHub)
 #   --mcp-port PORT         MCP local port (enables MCP for all agents)
-#   --skip-auth             Skip Claude Code authentication setup
+#   --skip-claude-auth             Skip Claude Code authentication setup
 #
 # Creates a 'fagents' infra user that owns the comms server and git repos.
 # Agents connect via localhost. Easy to migrate to remote server later.
@@ -30,7 +30,7 @@ set -euo pipefail
 COMMS_PORT=9754
 COMMS_REPO="https://github.com/fagents/fagents-comms.git"
 MCP_PORT=""
-SKIP_AUTH=""
+SKIP_CLAUDE_AUTH=""
 TEMPLATE=""
 AGENTS=()
 HUMAN_NAME=""
@@ -46,7 +46,7 @@ while [[ $# -gt 0 ]]; do
         --comms-port)   COMMS_PORT="$2"; shift 2 ;;
         --comms-repo)   COMMS_REPO="$2"; shift 2 ;;
         --mcp-port)     MCP_PORT="$2"; shift 2 ;;
-        --skip-auth)    SKIP_AUTH=1; shift ;;
+        --skip-claude-auth)    SKIP_CLAUDE_AUTH=1; shift ;;
         --help|-h)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
             exit 0
@@ -408,7 +408,7 @@ rm -f "$INSTALL_SCRIPT"
 
 # ── Step 6: Claude Code authentication ──
 CLAUDE_TOKEN=""
-if [[ -z "$SKIP_AUTH" ]]; then
+if [[ -z "$SKIP_CLAUDE_AUTH" ]]; then
     echo "=== Step 6: Claude Code authentication ==="
     echo ""
     echo "  All agents need a Claude Code OAuth token to run."
