@@ -124,11 +124,27 @@ if [[ ${#AGENTS[@]} -eq 0 ]]; then
     exit 1
 fi
 
+# ── Name agents (template roles → personal names) ──
+if [[ -n "$TEMPLATE_DIR" && -z "${NONINTERACTIVE:-}" ]]; then
+    echo ""
+    echo "Name your agents (Enter to keep default):"
+    RENAMED_AGENTS=()
+    for name in "${AGENTS[@]}"; do
+        read -rp "  $name → name: [$name] " new_name
+        new_name="${new_name:-$name}"
+        if [[ "$new_name" != "$name" ]]; then
+            [[ -n "${AGENT_SOULS[$name]:-}" ]] && AGENT_SOULS["$new_name"]="${AGENT_SOULS[$name]}" && unset "AGENT_SOULS[$name]"
+            [[ -n "${AGENT_BOOTSTRAP[$name]:-}" ]] && AGENT_BOOTSTRAP["$new_name"]=1 && unset "AGENT_BOOTSTRAP[$name]"
+        fi
+        RENAMED_AGENTS+=("$new_name")
+    done
+    AGENTS=("${RENAMED_AGENTS[@]}")
+fi
+
 # ── Interactive confirmation ──
 echo ""
 echo "Agents: ${AGENTS[*]}"
 prompt COMMS_PORT "Comms server port" "$COMMS_PORT"
-prompt COMMS_REPO "Comms repo URL" "$COMMS_REPO"
 
 # Ask for human name
 echo ""
@@ -144,7 +160,15 @@ echo "  Infra user:  $INFRA_USER (owns comms + git repos)"
 echo "  Agents:      ${AGENTS[*]}"
 echo "  Human:       $HUMAN_NAME"
 echo "  Comms:       127.0.0.1:$COMMS_PORT"
-echo "  Comms repo:  $COMMS_REPO"
+
+# Warn about sudo agents
+for name in "${AGENTS[@]}"; do
+    if [[ -n "${AGENT_BOOTSTRAP[$name]:-}" ]]; then
+        echo ""
+        echo "  WARNING: $name will have SUDO access (bootstrap/ops agent)"
+    fi
+done
+
 echo ""
 read -rp "Proceed? [Y/n] " confirm
 if [[ "${confirm,,}" == "n" ]]; then
@@ -160,7 +184,7 @@ for spec in "${AGENTS[@]}"; do
     if [[ "$spec" == *":"* ]]; then
         ws="${spec#*:}"
     else
-        ws="dev-team-$(echo "$name" | tr '[:upper:]' '[:lower:]')"
+        ws="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
     fi
     AGENT_NAMES+=("$name")
     AGENT_WORKSPACES["$name"]="$ws"
@@ -206,22 +230,24 @@ echo ""
 
 # ── Step 2: Set up infra (comms + git repos) ──
 echo "=== Step 2: Infrastructure (under $INFRA_USER) ==="
+REPOS_DIR="$INFRA_HOME/repos"
+su - "$INFRA_USER" -c "mkdir -p ~/repos"
 
 # Clone fagents-comms (shared copy, detached from GitHub)
-COMMS_DIR="$INFRA_HOME/fagents-comms"
+COMMS_DIR="$INFRA_HOME/repos/fagents-comms"
 if [[ -d "$COMMS_DIR" ]]; then
     echo "  fagents-comms already at $COMMS_DIR"
 else
-    su - "$INFRA_USER" -c "git clone '$COMMS_REPO' ~/fagents-comms && git -C ~/fagents-comms remote remove origin" 2>&1 | sed 's/^/  /'
+    su - "$INFRA_USER" -c "git clone '$COMMS_REPO' ~/repos/fagents-comms && git -C ~/repos/fagents-comms remote remove origin" 2>&1 | sed 's/^/  /'
 fi
 
 # Clone fagents-autonomy as bare repo (shared, detached from GitHub)
 # Bare repos avoid git's "dubious ownership" check across users
-SHARED_AUTONOMY="$INFRA_HOME/fagents-autonomy.git"
+SHARED_AUTONOMY="$INFRA_HOME/repos/fagents-autonomy.git"
 if [[ -d "$SHARED_AUTONOMY" ]]; then
     echo "  fagents-autonomy already at $SHARED_AUTONOMY"
 else
-    su - "$INFRA_USER" -c "git clone --bare '$AUTONOMY_REPO' ~/fagents-autonomy.git && git -C ~/fagents-autonomy.git remote remove origin 2>/dev/null; true" 2>&1 | sed 's/^/  /'
+    su - "$INFRA_USER" -c "git clone --bare '$AUTONOMY_REPO' ~/repos/fagents-autonomy.git && git -C ~/repos/fagents-autonomy.git remote remove origin 2>/dev/null; true" 2>&1 | sed 's/^/  /'
 fi
 # Make readable so agents can clone from it
 chmod -R g+rX "$SHARED_AUTONOMY"
@@ -229,8 +255,6 @@ chmod -R g+rX "$SHARED_AUTONOMY"
 AUTONOMY_REPO="$SHARED_AUTONOMY"
 
 # Create bare git repos for each agent
-REPOS_DIR="$INFRA_HOME/repos"
-su - "$INFRA_USER" -c "mkdir -p ~/repos"
 for name in "${AGENT_NAMES[@]}"; do
     ws="${AGENT_WORKSPACES[$name]}"
     repo_path="$REPOS_DIR/$ws.git"
@@ -251,7 +275,7 @@ if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/api/heal
     echo "  Comms server already running on port $COMMS_PORT"
 else
     echo "  Starting comms server on port $COMMS_PORT..."
-    su - "$INFRA_USER" -c "cd ~/fagents-comms && PORT=$COMMS_PORT nohup python3 server.py serve > comms.log 2>&1 &"
+    su - "$INFRA_USER" -c "cd ~/repos/fagents-comms && PORT=$COMMS_PORT nohup python3 server.py serve > comms.log 2>&1 &"
     for i in 1 2 3 4 5; do
         sleep 1
         if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/api/health" 2>/dev/null | grep -q "200"; then
@@ -265,7 +289,7 @@ else
 fi
 
 # Create general channel
-su - "$INFRA_USER" -c "cd ~/fagents-comms && python3 server.py create-channel general 2>/dev/null" || true
+su - "$INFRA_USER" -c "cd ~/repos/fagents-comms && python3 server.py create-channel general 2>/dev/null" || true
 echo ""
 
 # ── Step 4: Register agents + human with comms ──
@@ -274,7 +298,7 @@ declare -A AGENT_TOKENS
 
 # Register agents
 for name in "${AGENT_NAMES[@]}"; do
-    output=$(su - "$INFRA_USER" -c "cd ~/fagents-comms && python3 server.py add-agent '$name'" 2>&1) || true
+    output=$(su - "$INFRA_USER" -c "cd ~/repos/fagents-comms && python3 server.py add-agent '$name'" 2>&1) || true
     token=$(echo "$output" | grep "^Token: " | cut -d' ' -f2)
     if [[ -n "$token" ]]; then
         AGENT_TOKENS["$name"]="$token"
@@ -292,7 +316,7 @@ done
 
 # Register human
 HUMAN_TOKEN=""
-output=$(su - "$INFRA_USER" -c "cd ~/fagents-comms && python3 server.py add-agent '$HUMAN_NAME'" 2>&1) || true
+output=$(su - "$INFRA_USER" -c "cd ~/repos/fagents-comms && python3 server.py add-agent '$HUMAN_NAME'" 2>&1) || true
 token=$(echo "$output" | grep "^Token: " | cut -d' ' -f2)
 if [[ -n "$token" ]]; then
     HUMAN_TOKEN="$token"
@@ -398,7 +422,7 @@ echo "Starting comms server..."
 if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/api/health" 2>/dev/null | grep -q "200"; then
     echo "  Already running"
 else
-    su - "$INFRA_USER" -c "cd ~/fagents-comms && PORT=$COMMS_PORT nohup python3 server.py serve > comms.log 2>&1 &"
+    su - "$INFRA_USER" -c "cd ~/repos/fagents-comms && PORT=$COMMS_PORT nohup python3 server.py serve > comms.log 2>&1 &"
     sleep 2
     echo "  Started"
 fi

@@ -39,7 +39,7 @@ prompt() {
 
 # ── Gather configuration ──
 prompt AGENT_NAME   "Agent name (short, e.g. FTL, MEM, KID1)"
-prompt WORKSPACE    "Workspace name (e.g. dev-team-ftl, my-project)"
+prompt WORKSPACE    "Workspace name (e.g. ftl, my-project)"
 prompt GIT_HOST     "Git server (SSH, or 'local' for no remote)" "local"
 prompt COMMS_URL    "Comms server URL" "http://127.0.0.1:9754"
 prompt AUTONOMY_REPO "fagents-autonomy git repo URL" "https://github.com/fagents/fagents-autonomy.git"
