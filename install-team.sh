@@ -221,9 +221,7 @@ SHARED_AUTONOMY="$INFRA_HOME/fagents-autonomy.git"
 if [[ -d "$SHARED_AUTONOMY" ]]; then
     echo "  fagents-autonomy already at $SHARED_AUTONOMY"
 else
-    su - "$INFRA_USER" -c "git clone --bare '$AUTONOMY_REPO' ~/fagents-autonomy.git" 2>&1 | sed 's/^/  /'
-    # Detach from GitHub — no remote in bare repos by default, but clean up just in case
-    git -C "$SHARED_AUTONOMY" remote remove origin 2>/dev/null || true
+    su - "$INFRA_USER" -c "git clone --bare '$AUTONOMY_REPO' ~/fagents-autonomy.git && git -C ~/fagents-autonomy.git remote remove origin 2>/dev/null; true" 2>&1 | sed 's/^/  /'
 fi
 # Make readable so agents can clone from it
 chmod -R g+rX "$SHARED_AUTONOMY"
