@@ -299,43 +299,56 @@ echo ""
 echo "=== Step 4: Register agents + human ==="
 declare -A AGENT_TOKENS
 
-# Register agents
+# Register via CLI (writes tokens.json directly)
 for name in "${AGENT_NAMES[@]}"; do
     output=$(su - "$INFRA_USER" -c "cd ~/repos/fagents-comms && python3 server.py add-agent '$name'" 2>&1) || true
     token=$(echo "$output" | grep "^Token: " | cut -d' ' -f2)
     if [[ -n "$token" ]]; then
         AGENT_TOKENS["$name"]="$token"
         echo "  Registered $name"
-        # Subscribe to general + personal DM channel
-        curl -sf -X PUT "http://127.0.0.1:$COMMS_PORT/api/agents/$name/subscriptions" \
-            -H "Authorization: Bearer $token" \
-            -H "Content-Type: application/json" \
-            -d "{\"channels\": [\"general\", \"dm-$(echo "$name" | tr '[:upper:]' '[:lower:]')\"]}" > /dev/null 2>&1 || true
     else
         echo "  WARNING: Failed to register $name"
         echo "    $output" | head -3
     fi
 done
 
-# Register human
 HUMAN_TOKEN=""
 output=$(su - "$INFRA_USER" -c "cd ~/repos/fagents-comms && python3 server.py add-agent '$HUMAN_NAME'" 2>&1) || true
 token=$(echo "$output" | grep "^Token: " | cut -d' ' -f2)
 if [[ -n "$token" ]]; then
     HUMAN_TOKEN="$token"
     echo "  Registered human: $HUMAN_NAME"
-    # Subscribe human to all channels (general + all agent DMs)
+else
+    echo "  WARNING: Failed to register human $HUMAN_NAME"
+fi
+
+# Restart server so it picks up new tokens (CLI bypasses in-memory cache)
+echo "  Restarting comms server..."
+COMMS_PID=$(pgrep -f "python3 server.py serve" -u "$(id -u "$INFRA_USER")" 2>/dev/null || true)
+[[ -n "$COMMS_PID" ]] && kill $COMMS_PID 2>/dev/null
+sleep 1
+su - "$INFRA_USER" -c "cd ~/repos/fagents-comms && nohup python3 server.py serve --port $COMMS_PORT > comms.log 2>&1 &"
+sleep 2
+
+# Subscribe via HTTP API (server now has the tokens)
+for name in "${AGENT_NAMES[@]}"; do
+    token="${AGENT_TOKENS[$name]:-}"
+    [[ -z "$token" ]] && continue
+    curl -sf -X PUT "http://127.0.0.1:$COMMS_PORT/api/agents/$name/subscriptions" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        -d "{\"channels\": [\"general\", \"dm-$(echo "$name" | tr '[:upper:]' '[:lower:]')\"]}" > /dev/null 2>&1 || true
+done
+if [[ -n "$HUMAN_TOKEN" ]]; then
     all_channels='["general"'
     for name in "${AGENT_NAMES[@]}"; do
         all_channels+=",\"dm-$(echo "$name" | tr '[:upper:]' '[:lower:]')\""
     done
     all_channels+="]"
     curl -sf -X PUT "http://127.0.0.1:$COMMS_PORT/api/agents/$HUMAN_NAME/subscriptions" \
-        -H "Authorization: Bearer $token" \
+        -H "Authorization: Bearer $HUMAN_TOKEN" \
         -H "Content-Type: application/json" \
         -d "{\"channels\": $all_channels}" > /dev/null 2>&1 || true
-else
-    echo "  WARNING: Failed to register human $HUMAN_NAME"
 fi
 echo ""
 
