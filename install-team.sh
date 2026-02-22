@@ -529,7 +529,15 @@ echo ""
 echo "  3. Stop the team:"
 echo "     sudo $TEAM_DIR/stop-team.sh"
 echo ""
-echo "  4. View logs:"
+echo "  4. Access comms remotely (SSH tunnel):"
+echo "     ssh -L $COMMS_PORT:127.0.0.1:$COMMS_PORT user@this-machine"
+if [[ -n "$HUMAN_TOKEN" ]]; then
+    echo "     Then open: http://127.0.0.1:$COMMS_PORT/?token=$HUMAN_TOKEN"
+else
+    echo "     Then open: http://127.0.0.1:$COMMS_PORT/?token=YOUR_TOKEN"
+fi
+echo ""
+echo "  5. View logs:"
 for name in "${AGENT_NAMES[@]}"; do
     user=$(agent_user "$name")
     ws="${AGENT_WORKSPACES[$name]}"
