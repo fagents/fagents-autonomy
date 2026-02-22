@@ -5,7 +5,7 @@
 #    or: sudo ./install-team.sh --template business
 #
 # Each AGENT can be NAME or NAME:WORKSPACE
-#   NAME only:       workspace defaults to dev-team-<name lowercase>
+#   NAME only:       workspace defaults to <name lowercase>
 #   NAME:WORKSPACE:  explicit workspace name
 #
 # Options:
@@ -13,6 +13,7 @@
 #   --comms-port PORT       Comms server port (default: 9754)
 #   --comms-repo URL        fagents-comms git repo URL (default: GitHub)
 #   --mcp-port PORT         MCP local port (enables MCP for all agents)
+#   --skip-auth             Skip Claude Code authentication setup
 #
 # Creates a 'fagents' infra user that owns the comms server and git repos.
 # Agents connect via localhost. Easy to migrate to remote server later.
@@ -29,6 +30,7 @@ set -euo pipefail
 COMMS_PORT=9754
 COMMS_REPO="https://github.com/fagents/fagents-comms.git"
 MCP_PORT=""
+SKIP_AUTH=""
 TEMPLATE=""
 AGENTS=()
 HUMAN_NAME=""
@@ -44,6 +46,7 @@ while [[ $# -gt 0 ]]; do
         --comms-port)   COMMS_PORT="$2"; shift 2 ;;
         --comms-repo)   COMMS_REPO="$2"; shift 2 ;;
         --mcp-port)     MCP_PORT="$2"; shift 2 ;;
+        --skip-auth)    SKIP_AUTH=1; shift ;;
         --help|-h)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
             exit 0
@@ -403,8 +406,42 @@ done
 
 rm -f "$INSTALL_SCRIPT"
 
-# ── Step 6: Create team management scripts ──
-echo "=== Step 6: Team scripts ==="
+# ── Step 6: Claude Code authentication ──
+CLAUDE_TOKEN=""
+if [[ -z "$SKIP_AUTH" ]]; then
+    echo "=== Step 6: Claude Code authentication ==="
+    echo ""
+    echo "  All agents need a Claude Code OAuth token to run."
+    echo "  Run 'claude setup-token' on a machine with a browser,"
+    echo "  then paste the token here."
+    echo ""
+    read -rp "  Claude OAuth token (or Enter to skip): " CLAUDE_TOKEN
+    if [[ -n "$CLAUDE_TOKEN" ]]; then
+        for name in "${AGENT_NAMES[@]}"; do
+            user=$(agent_user "$name")
+            ws="${AGENT_WORKSPACES[$name]}"
+            agent_home=$(eval echo "~$user")
+            agent_ws="$agent_home/workspace/$ws"
+
+            # Add token to start-agent.sh
+            sed -i '/^export COMMS_URL=/a export CLAUDE_CODE_OAUTH_TOKEN="'"$CLAUDE_TOKEN"'"' "$agent_ws/start-agent.sh"
+
+            # Create ~/.claude.json for onboarding bypass
+            su - "$user" -c "mkdir -p ~/.claude && echo '{\"hasCompletedOnboarding\": true}' > ~/.claude.json"
+
+            echo "  Configured $name"
+        done
+        echo "  Done."
+    else
+        echo "  Skipped — set up auth manually later."
+    fi
+else
+    echo "=== Step 6: Claude Code authentication (skipped) ==="
+fi
+echo ""
+
+# ── Step 7: Create team management scripts ──
+echo "=== Step 7: Team scripts ==="
 TEAM_DIR="$INFRA_HOME/team"
 su - "$INFRA_USER" -c "mkdir -p ~/team"
 
@@ -517,19 +554,25 @@ if [[ -n "$HUMAN_TOKEN" ]]; then
 fi
 echo ""
 echo "Next steps:"
-echo "  1. Run 'claude login' for each agent user:"
-for name in "${AGENT_NAMES[@]}"; do
-    user=$(agent_user "$name")
-    echo "     sudo su - $user -c 'claude login'"
-done
-echo ""
-echo "  2. Start the team:"
+STEP=1
+if [[ -z "$CLAUDE_TOKEN" ]]; then
+    echo "  $STEP. Run 'claude login' for each agent user:"
+    for name in "${AGENT_NAMES[@]}"; do
+        user=$(agent_user "$name")
+        echo "     sudo su - $user -c 'claude login'"
+    done
+    echo ""
+    STEP=$((STEP + 1))
+fi
+echo "  $STEP. Start the team:"
 echo "     sudo $TEAM_DIR/start-team.sh"
 echo ""
-echo "  3. Stop the team:"
+STEP=$((STEP + 1))
+echo "  $STEP. Stop the team:"
 echo "     sudo $TEAM_DIR/stop-team.sh"
 echo ""
-echo "  4. Access comms remotely (SSH tunnel):"
+STEP=$((STEP + 1))
+echo "  $STEP. Access comms remotely (SSH tunnel):"
 echo "     ssh -L $COMMS_PORT:127.0.0.1:$COMMS_PORT ${SUDO_USER:-\$USER}@$(hostname)"
 if [[ -n "$HUMAN_TOKEN" ]]; then
     echo "     Then open: http://127.0.0.1:$COMMS_PORT/?token=$HUMAN_TOKEN"
@@ -537,7 +580,8 @@ else
     echo "     Then open: http://127.0.0.1:$COMMS_PORT/?token=YOUR_TOKEN"
 fi
 echo ""
-echo "  5. View logs:"
+STEP=$((STEP + 1))
+echo "  $STEP. View logs:"
 for name in "${AGENT_NAMES[@]}"; do
     user=$(agent_user "$name")
     ws="${AGENT_WORKSPACES[$name]}"
