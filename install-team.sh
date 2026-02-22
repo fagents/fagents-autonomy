@@ -368,8 +368,8 @@ for name in "${AGENT_NAMES[@]}"; do
         fi
         soul_file="${AGENT_SOULS[$name]:-}"
         if [[ -n "$soul_file" && -f "$TEMPLATE_DIR/souls/$soul_file" ]]; then
-            cp "$TEMPLATE_DIR/souls/$soul_file" "$agent_ws/SOUL.md"
-            chown "$user:fagent" "$agent_ws/SOUL.md"
+            cp "$TEMPLATE_DIR/souls/$soul_file" "$agent_ws/memory/SOUL.md"
+            chown "$user:fagent" "$agent_ws/memory/SOUL.md"
             echo "  Copied SOUL.md (from $soul_file)"
         fi
     fi
