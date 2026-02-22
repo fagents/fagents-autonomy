@@ -261,7 +261,7 @@ for name in "${AGENT_NAMES[@]}"; do
     if [[ -d "$repo_path" ]]; then
         echo "  Repo $ws.git already exists"
     else
-        su - "$INFRA_USER" -c "git init --bare ~/repos/$ws.git" 2>&1 | sed 's/^/  /'
+        su - "$INFRA_USER" -c "git init --bare -b main ~/repos/$ws.git" 2>&1 | sed 's/^/  /'
         echo "  Created bare repo: $ws.git"
     fi
 done

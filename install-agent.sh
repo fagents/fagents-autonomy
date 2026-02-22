@@ -99,13 +99,13 @@ echo "=== Step 2: Git repo ==="
 if [[ "$GIT_HOST" == "local" ]]; then
     echo "  Initializing local repo..."
     mkdir -p "$WORKSPACE_DIR"
-    git -C "$WORKSPACE_DIR" init --quiet
+    git -C "$WORKSPACE_DIR" init --quiet -b main
     REPO_URL="(local)"
 else
     REPO_PATH="repos/${WORKSPACE}.git"
     REPO_URL="ssh://${GIT_HOST}/home/$(echo "$GIT_HOST" | cut -d@ -f1)/${REPO_PATH}"
     echo "  Creating bare repo on $GIT_HOST..."
-    ssh "$GIT_HOST" "git init --bare ~/$REPO_PATH 2>/dev/null" || echo "  (repo may already exist)"
+    ssh "$GIT_HOST" "git init --bare -b main ~/$REPO_PATH 2>/dev/null" || echo "  (repo may already exist)"
     echo "  Cloning to $WORKSPACE_DIR..."
     if [[ -d "$WORKSPACE_DIR" ]]; then
         echo "  Workspace already exists — skipping clone."
@@ -113,7 +113,7 @@ else
         git clone "$REPO_URL" "$WORKSPACE_DIR" 2>/dev/null || {
             echo "  Empty repo — initializing..."
             mkdir -p "$WORKSPACE_DIR"
-            git -C "$WORKSPACE_DIR" init --quiet
+            git -C "$WORKSPACE_DIR" init --quiet -b main
             git -C "$WORKSPACE_DIR" remote add origin "$REPO_URL"
         }
     fi
