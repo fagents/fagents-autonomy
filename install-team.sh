@@ -225,6 +225,8 @@ else
 fi
 # Make readable so agents can clone from it
 chmod -R g+rX "$SHARED_AUTONOMY"
+# Allow other users to clone from this repo (git safe.directory check)
+git config --system --add safe.directory "$SHARED_AUTONOMY"
 # Agents now clone from the local shared copy
 AUTONOMY_REPO="$SHARED_AUTONOMY"
 
