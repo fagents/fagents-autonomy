@@ -254,9 +254,15 @@ wait_for_wake() {
                 "$COMMS_URL/api/poll" 2>/dev/null \
                 | jq -r '.total // -1' 2>/dev/null) || current_total="-1"
 
+            # If comms just recovered (baseline was -1), update baseline and check for unread
+            if [ "$current_total" != "-1" ] && [ "$baseline_total" = "-1" ]; then
+                baseline_total="$current_total"
+                if fetch_unread; then
+                    return 0
+                fi
             # If total changed and we have valid counts, check for wake
-            if [ "$current_total" != "$baseline_total" ] && \
-               [ "$current_total" != "-1" ] && [ "$baseline_total" != "-1" ]; then
+            elif [ "$current_total" != "$baseline_total" ] && \
+                 [ "$current_total" != "-1" ] && [ "$baseline_total" != "-1" ]; then
                 if [ "${WAKE_MODE:-mentions}" = "channel" ]; then
                     # Channel mode: wake on any new message
                     fetch_unread || true  # still try to grab mentions for context
