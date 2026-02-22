@@ -320,6 +320,14 @@ fi
 # ── Step 6: Initial commit ──
 echo ""
 echo "=== Step 6: Initial commit ==="
+
+# Set git identity if not already configured
+if ! git config user.name &>/dev/null; then
+    git config user.name "$AGENT_NAME"
+    git config user.email "$(whoami)@$(hostname)"
+    echo "  Set git identity: $AGENT_NAME <$(whoami)@$(hostname)>"
+fi
+
 git add -A
 if git diff --cached --quiet 2>/dev/null; then
     echo "  Nothing to commit (workspace already initialized)."

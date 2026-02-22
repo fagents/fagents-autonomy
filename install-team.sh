@@ -234,14 +234,14 @@ echo ""
 
 # ── Step 3: Start comms server ──
 echo "=== Step 3: Start comms server ==="
-if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/health" 2>/dev/null | grep -q "200"; then
+if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/api/health" 2>/dev/null | grep -q "200"; then
     echo "  Comms server already running on port $COMMS_PORT"
 else
     echo "  Starting comms server on port $COMMS_PORT..."
     su - "$INFRA_USER" -c "cd ~/fagents-comms && PORT=$COMMS_PORT nohup python3 server.py serve > comms.log 2>&1 &"
     for i in 1 2 3 4 5; do
         sleep 1
-        if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/health" 2>/dev/null | grep -q "200"; then
+        if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/api/health" 2>/dev/null | grep -q "200"; then
             echo "  Comms server running"
             break
         fi
@@ -382,7 +382,7 @@ cat >> "$TEAM_DIR/start-team.sh" << COMMSSTART
 
 # Start comms server
 echo "Starting comms server..."
-if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/health" 2>/dev/null | grep -q "200"; then
+if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/api/health" 2>/dev/null | grep -q "200"; then
     echo "  Already running"
 else
     su - "$INFRA_USER" -c "cd ~/fagents-comms && PORT=$COMMS_PORT nohup python3 server.py serve > comms.log 2>&1 &"
