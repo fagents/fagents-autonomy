@@ -88,6 +88,7 @@ if [[ -d "$AUTONOMY_DIR" ]]; then
 else
     echo "  Cloning fagents-autonomy..."
     git clone "$AUTONOMY_REPO" "$AUTONOMY_DIR"
+    git -C "$AUTONOMY_DIR" remote remove origin
 fi
 echo "  Done."
 

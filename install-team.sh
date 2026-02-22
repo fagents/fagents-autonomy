@@ -212,7 +212,7 @@ COMMS_DIR="$INFRA_HOME/fagents-comms"
 if [[ -d "$COMMS_DIR" ]]; then
     echo "  fagents-comms already at $COMMS_DIR"
 else
-    su - "$INFRA_USER" -c "git clone '$COMMS_REPO' ~/fagents-comms" 2>&1 | sed 's/^/  /'
+    su - "$INFRA_USER" -c "git clone '$COMMS_REPO' ~/fagents-comms && git -C ~/fagents-comms remote remove origin" 2>&1 | sed 's/^/  /'
 fi
 
 # Create bare git repos for each agent
