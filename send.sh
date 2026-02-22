@@ -2,7 +2,7 @@
 # Send a message to the comms channel
 #
 # Local:  ./send.sh Juho "Check the new observation"
-# Remote: ssh host "cd ~/workspace/red-team-imagine && autonomy/send.sh Juho 'Check the new observation'"
+# Remote: ssh host "cd ~/workspace/my-project && autonomy/send.sh Juho 'Check the new observation'"
 
 if [ $# -lt 2 ]; then
     echo "Usage: $0 <sender> <message>"

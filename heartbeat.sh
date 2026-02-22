@@ -4,7 +4,7 @@
 # This is for one-shot heartbeats on machines without the daemon running.
 #
 # Usage: ./heartbeat.sh
-# Cron:  0 9,14,21 * * * /path/to/red-team-imagine/autonomy/heartbeat.sh
+# Cron:  0 9,14,21 * * * /path/to/fagents-autonomy/heartbeat.sh
 
 set -euo pipefail
 
