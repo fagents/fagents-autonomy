@@ -119,6 +119,16 @@ independently. For irreversible actions, "ready to send" is not the
 same as "I'm the one who sends." The trigger pull needs an explicit
 gate, separate from the prep work.
 
+### 8. Bind to localhost, not the world
+
+Never bind a service to 0.0.0.0. Use 127.0.0.1 (or ::1) unless the
+human lead explicitly approves a wider bind. This applies to dev
+servers, test fixtures, dashboards — anything that listens on a port.
+
+*Why:* 0.0.0.0 exposes the service to the entire network. On shared
+machines with multiple agents, that's an unnecessary attack surface.
+Localhost-only is the safe default.
+
 ## Task Ownership
 
 When you claim a task, post it explicitly:
