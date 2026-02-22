@@ -35,7 +35,7 @@ HUMAN_NAME=""
 INFRA_USER="fagents"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AUTONOMY_REPO="file://$SCRIPT_DIR"
+AUTONOMY_REPO="https://github.com/fagents/fagents-autonomy.git"
 
 # ── Parse args ──
 while [[ $# -gt 0 ]]; do
@@ -239,12 +239,16 @@ if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/health" 
 else
     echo "  Starting comms server on port $COMMS_PORT..."
     su - "$INFRA_USER" -c "cd ~/fagents-comms && PORT=$COMMS_PORT nohup python3 server.py serve > comms.log 2>&1 &"
-    sleep 2
-    if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/health" 2>/dev/null | grep -q "200"; then
-        echo "  Comms server running"
-    else
-        echo "  WARNING: Comms server may not have started. Check $COMMS_DIR/comms.log"
-    fi
+    for i in 1 2 3 4 5; do
+        sleep 1
+        if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$COMMS_PORT/health" 2>/dev/null | grep -q "200"; then
+            echo "  Comms server running"
+            break
+        fi
+        if [[ $i -eq 5 ]]; then
+            echo "  WARNING: Comms server may not have started. Check $COMMS_DIR/comms.log"
+        fi
+    done
 fi
 
 # Create general channel
@@ -298,6 +302,12 @@ echo ""
 # ── Step 5: Install each agent ──
 echo "=== Step 5: Install agents ==="
 
+# Copy install-agent.sh to /tmp so new users can run it
+# (their ~/workspace/fagents-autonomy doesn't exist yet — install-agent.sh creates it)
+INSTALL_SCRIPT="/tmp/fagents-install-agent.sh"
+cp "$SCRIPT_DIR/install-agent.sh" "$INSTALL_SCRIPT"
+chmod 755 "$INSTALL_SCRIPT"
+
 for name in "${AGENT_NAMES[@]}"; do
     user=$(agent_user "$name")
     ws="${AGENT_WORKSPACES[$name]}"
@@ -325,7 +335,7 @@ for name in "${AGENT_NAMES[@]}"; do
         export MCP_ENABLED='$MCP_ENABLED'
         export MCP_LOCAL_PORT='$MCP_LOCAL_PORT_VAL'
         export MCP_REMOTE_PORT='$MCP_REMOTE_PORT_VAL'
-        bash ~/workspace/fagents-autonomy/install-agent.sh
+        bash '$INSTALL_SCRIPT'
     " 2>&1 | sed 's/^/  /'
 
     # Set up git remote pointing to local bare repo
@@ -353,6 +363,8 @@ for name in "${AGENT_NAMES[@]}"; do
 
     echo ""
 done
+
+rm -f "$INSTALL_SCRIPT"
 
 # ── Step 6: Create team management scripts ──
 echo "=== Step 6: Team scripts ==="
