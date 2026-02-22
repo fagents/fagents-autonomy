@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESSION_FILE="$SCRIPT_DIR/../.session"
 
 # Find the actual claude binary (not bash shells that mention "claude" in args)
-CLAUDE_LINE=$(ps aux 2>/dev/null | grep '[c]laude -p' | grep -v '/bin/bash' | head -1)
+CLAUDE_LINE=$(ps aux 2>/dev/null | grep '[c]laude -p' | grep -v '/bin/bash' | head -1) || true
 
 is_daemon=false
 has_resume=false
@@ -25,7 +25,7 @@ if [ -n "$CLAUDE_LINE" ]; then
 fi
 
 # Check if daemon.sh is running
-DAEMON_LINE=$(ps aux 2>/dev/null | grep 'daemon\.sh' | grep -v grep | head -1)
+DAEMON_LINE=$(ps aux 2>/dev/null | grep 'daemon\.sh' | grep -v grep | head -1) || true
 if [ -n "$DAEMON_LINE" ]; then
     is_daemon=true
     daemon_pid=$(echo "$DAEMON_LINE" | awk '{print $2}')
