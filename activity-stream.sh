@@ -10,7 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-JSONL_DIR="${CLAUDE_PROJECT_DIR:-${PROJECT_DIR:-$SCRIPT_DIR/..}}/.introspection-session-logs"
+JSONL_DIR="${CLAUDE_PROJECT_DIR:-${PROJECT_DIR:-$SCRIPT_DIR/..}}/.introspection-logs"
 
 COMMS_URL="${COMMS_URL:-}"
 COMMS_TOKEN="${COMMS_TOKEN:-}"

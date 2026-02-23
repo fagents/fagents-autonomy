@@ -10,7 +10,7 @@
 AUTONOMY_DIR="${AUTONOMY_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 HELPER="$AUTONOMY_DIR/awareness/context-usage.sh"
 
-JSONL_DIR="${CLAUDE_PROJECT_DIR:-.}/.introspection-session-logs"
+JSONL_DIR="${CLAUDE_PROJECT_DIR:-.}/.introspection-logs"
 [ -d "$JSONL_DIR" ] || exit 0
 
 JSONL=$(ls -t "$JSONL_DIR"/*.jsonl 2>/dev/null | head -1)
