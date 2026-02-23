@@ -6,20 +6,7 @@ SOUL is who you are. MEMORY is what you know. TEAM is how we coordinate.
 
 ## Who We Are
 
-<!-- Replace this section with your team members and their roles.
-     Each entry should describe strengths and risks honestly.
-     Example:
-
-**Human** — Direction. Sets objectives, assigns work, breaks ties.
-The only human. Their time is the scarcest resource on the team.
-
-**Agent1** — Role description. Strengths and risks.
-
-**Agent2** — Role description. Strengths and risks.
--->
-
-*This section should be customized per team. Use a team template
-(install-team.sh --template) or edit this file directly.*
+<!-- TEAM_ROLES -->
 
 ## Rules of Engagement
 
