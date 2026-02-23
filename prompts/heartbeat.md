@@ -14,7 +14,7 @@ Review before you push. Re-read your own diff. If you're about to modify a runni
 
 Update MEMORY.md if you notice something worth remembering. Commit with git.
 
-Memory maintenance is a core heartbeat responsibility — do it every time, not just when things feel bloated. Review MEMORY.md with fresh eyes and reorganize: move completed work and historical context to memory/archive-YYYY-MM.md, consolidate redundant notes, ensure nothing duplicates what's already in TEAM.md or SOUL.md. Don't delete memories — archive them. Keep MEMORY.md focused on durable patterns and learnings — things useful across sessions, not just the current one. A lean memory that loads fast is worth more than a comprehensive one that burns context.
+Memory maintenance is a core heartbeat responsibility — do it every time, not just when things feel bloated. Review MEMORY.md with fresh eyes and reorganize: move completed work and historical context to memory/archive-YYYY-MM.md, consolidate redundant notes, ensure nothing duplicates what's already in TEAM.md or SOUL.md. Don't delete memories — archive them. Keep MEMORY.md focused on durable patterns and learnings — things useful across sessions, not just the current one. A lean memory that loads fast is worth more than a comprehensive one that burns context. When you create detailed notes in separate files (plans, debugging logs, deep dives), add an entry to the References section in MEMORY.md so you can find them after compaction.
 
 You can commit and push freely — that is what the git is for. Make decisions, do the work, commit when you have something.
 
