@@ -855,13 +855,13 @@ echo "context.sh:"
 
 CTX_INT_SCRIPT="$SCRIPT_DIR/awareness/context.sh"
 CTX_INT_TMP=$(mktemp -d)
-mkdir -p "$CTX_INT_TMP/.freeturtle"
+mkdir -p "$CTX_INT_TMP/.introspection-session-logs"
 export CLAUDE_PROJECT_DIR="$CTX_INT_TMP"
 
 # Helper: create a JSONL with specific token values
 make_jsonl() {
     local inp="$1" cc="${2:-0}" cr="${3:-0}"
-    cat > "$CTX_INT_TMP/.freeturtle/session.jsonl" << EOF
+    cat > "$CTX_INT_TMP/.introspection-session-logs/session.jsonl" << EOF
 {"message":{"usage":{"input_tokens":$inp,"cache_creation_input_tokens":$cc,"cache_read_input_tokens":$cr}}}
 EOF
 }
@@ -916,9 +916,9 @@ assert_empty "$OUTPUT" "ctx.sh: no jsonl dir — silent empty output"
 export CLAUDE_PROJECT_DIR="$SAVE_PROJ"
 
 # Test: empty JSONL dir — silent exit
-mkdir -p "$CTX_INT_TMP/.freeturtle-empty"
+mkdir -p "$CTX_INT_TMP/.introspection-session-logs-empty"
 export CLAUDE_PROJECT_DIR="$CTX_INT_TMP"
-rm -f "$CTX_INT_TMP/.freeturtle"/*.jsonl
+rm -f "$CTX_INT_TMP/.introspection-session-logs"/*.jsonl
 OUTPUT=$("$CTX_INT_SCRIPT") || true
 assert_empty "$OUTPUT" "ctx.sh: no jsonl files — silent empty output"
 
