@@ -494,6 +494,30 @@ OUTPUT=$(read_prompt "test.md")
 assert_contains "$OUTPUT" "/custom/path/comms/client.sh" "AUTONOMY_DIR overrides client path"
 AUTONOMY_DIR=""
 
+# Test: local prompts override defaults (per-template customization)
+LOCAL_PROMPTS_DIR=$(mktemp -d)
+PROJECT_DIR_SAVE="$PROJECT_DIR"
+PROJECT_DIR="$LOCAL_PROMPTS_DIR"
+mkdir -p "$LOCAL_PROMPTS_DIR/prompts"
+cat > "$LOCAL_PROMPTS_DIR/prompts/test.md" << 'TMPL'
+Local override:
+{{CHANNELS_BLOCK}}
+Done.
+TMPL
+CH_ARRAY=("general")
+INTERVAL=300
+WAKE_MENTIONS=""
+AUTONOMY_DIR=""
+OUTPUT=$(read_prompt "test.md")
+assert_contains "$OUTPUT" "Local override" "local prompts/ overrides default prompts"
+
+# Test: falls back to default when no local override exists
+OUTPUT=$(read_prompt "test-msg.md")
+assert_contains "$OUTPUT" "--since 10m" "falls back to default when no local override"
+
+rm -rf "$LOCAL_PROMPTS_DIR"
+PROJECT_DIR="$PROJECT_DIR_SAVE"
+
 # Test: missing prompt file
 OUTPUT=$(read_prompt "nonexistent.md" 2>/dev/null)
 assert_contains "$OUTPUT" "prompt file missing" "missing prompt file returns error"

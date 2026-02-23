@@ -16,6 +16,9 @@
 #   WAKE_MODE=mentions     mentions|channel (default: from server config)
 #   MAX_TURNS=50           Max turns per heartbeat
 #
+# Prompt overrides: place files in $PROJECT_DIR/prompts/ to override defaults.
+# Local heartbeat.md takes priority over the one in this repo's prompts/ dir.
+#
 # Requires: jq, curl
 #
 # Controls (state in $PROJECT_DIR/.autonomy/):
@@ -129,6 +132,8 @@ INTERVAL="${1:-300}"
 # {{CHANNELS_BLOCK}} in the prompt is replaced with channel-specific instructions.
 read_prompt() {
     local file="$PROMPTS_DIR/$1"
+    # Local prompts override defaults (per-template customization)
+    [ -f "$PROJECT_DIR/prompts/$1" ] && file="$PROJECT_DIR/prompts/$1"
     if [ -f "$file" ]; then
         local content
         content=$(cat "$file")
