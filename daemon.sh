@@ -1,5 +1,5 @@
 #!/bin/bash
-# Freeturtle Daemon — autonomous agent loop via Claude Code
+# fagents daemon — autonomous agent loop via Claude Code
 #
 # Usage: AGENT=<name> COMMS_URL=... COMMS_TOKEN=... ./daemon.sh [interval_seconds]
 #
@@ -36,7 +36,7 @@ COMMS_POLL_INTERVAL="${COMMS_POLL_INTERVAL:-1}"
 WAKE_MODE="${WAKE_MODE:-}"  # mentions|channel — env overrides server config
 
 if [ -z "$AGENT" ] || [ -z "$COMMS_URL" ] || [ -z "$COMMS_TOKEN" ]; then
-    echo "Freeturtle Daemon — autonomous agent loop"
+    echo "fagents daemon — autonomous agent loop"
     echo ""
     echo "Required environment variables:"
     echo "  AGENT        Agent identity (e.g. ops, dev, coo)"
@@ -154,6 +154,7 @@ read_prompt() {
             block="${block}  $client_cmd send $ch \"your message\""$'\n'
         done
         content="${content//\{\{CHANNELS_BLOCK\}\}/$block}"
+        content="${content//\{\{AGENT_NAME\}\}/$AGENT}"
         # Inject pre-fetched mentions (from fetch_unread) or remove placeholder
         if [ -n "$WAKE_MENTIONS" ]; then
             local mentions_block="Messages that triggered this wake:"$'\n'"$WAKE_MENTIONS"
@@ -305,7 +306,7 @@ else
     log "Using defaults: wake_mode=${WAKE_MODE:-mentions}, poll_interval=$COMMS_POLL_INTERVAL"
 fi
 
-log "Freeturtle daemon starting (agent: $AGENT, PID: $$, interval: ${INTERVAL}s, max-turns: $MAX_TURNS, channels: $CHANNELS)"
+log "fagents daemon starting (agent: $AGENT, PID: $$, interval: ${INTERVAL}s, max-turns: $MAX_TURNS, channels: $CHANNELS)"
 
 # First iteration — resume existing session if available, else create new
 check_pause
