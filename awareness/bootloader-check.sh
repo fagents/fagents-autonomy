@@ -5,6 +5,10 @@
 # Output (stdout): suggestion string if ready, empty otherwise.
 # State file: $PROJECT_DIR/.autonomy/.bootloader-suggested
 
+# Thresholds
+MIN_MEMORY_LINES=150   # total lines across memory/*.md
+MIN_GIT_COMMITS=30     # commits in workspace repo
+
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 STATE_DIR="$PROJECT_DIR/.autonomy"
 mkdir -p "$STATE_DIR"
@@ -23,7 +27,7 @@ TOTAL_LINES=$(cat "$PROJECT_DIR/memory/"*.md 2>/dev/null | wc -l)
 GIT_COMMITS=$(git -C "$PROJECT_DIR" rev-list --count HEAD 2>/dev/null || echo 0)
 
 # Trigger on either: enough reflection OR enough experience
-[ "$TOTAL_LINES" -ge 150 ] || [ "$GIT_COMMITS" -ge 30 ] || exit 0
+[ "$TOTAL_LINES" -ge "$MIN_MEMORY_LINES" ] || [ "$GIT_COMMITS" -ge "$MIN_GIT_COMMITS" ] || exit 0
 
 # Set flag so we only suggest once
 date +%s > "$SUGGESTED_FLAG"
