@@ -6,8 +6,8 @@
 # State file: $PROJECT_DIR/.autonomy/.bootloader-suggested
 
 # Thresholds
-MIN_MEMORY_LINES=150   # total lines across memory/*.md
-MIN_GIT_COMMITS=30     # commits in workspace repo
+MIN_MEMORY_LINES=100   # total lines across memory/*.md
+MIN_GIT_COMMITS=20     # commits in workspace repo
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 STATE_DIR="$PROJECT_DIR/.autonomy"
