@@ -176,8 +176,8 @@ with open(sys.argv[1]) as f:
 
 # Extract globals
 print('WAKE_MENTIONS=\"\"')
-print('WAKE_MODE=\"\"')
-print('_ENV_WAKE_MODE=\"\"')
+print('WAKE_CHANNELS=\"\"')
+print('_ENV_WAKE_CHANNELS=\"\"')
 print()
 
 funcs = ['refresh_channels', 'fetch_config', 'fetch_unread', 'wait_for_wake', 'read_prompt', 'check_comms']
@@ -320,45 +320,45 @@ echo ""
 echo "fetch_config():"
 
 # Test 11: fetches config from server
-set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_mode": "channel", "poll_interval": 2}}'
-WAKE_MODE=""
-_ENV_WAKE_MODE=""
+set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_channels": "dm-test,general", "poll_interval": 2}}'
+WAKE_CHANNELS=""
+_ENV_WAKE_CHANNELS=""
 COMMS_POLL_INTERVAL=1
 fetch_config; RC=$?
 assert_eq "0" "$RC" "returns 0 on success"
-assert_eq "channel" "$WAKE_MODE" "sets WAKE_MODE from server"
+assert_eq "dm-test,general" "$WAKE_CHANNELS" "sets WAKE_CHANNELS from server"
 assert_eq "2" "$COMMS_POLL_INTERVAL" "sets COMMS_POLL_INTERVAL from server"
 
-# Test 12: env WAKE_MODE overrides server
-set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_mode": "channel", "poll_interval": 3}}'
-WAKE_MODE="mentions"
-_ENV_WAKE_MODE="mentions"
+# Test 12: env WAKE_CHANNELS overrides server
+set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_channels": "dm-test,general", "poll_interval": 3}}'
+WAKE_CHANNELS="dm-myagent"
+_ENV_WAKE_CHANNELS="dm-myagent"
 fetch_config; RC=$?
-assert_eq "mentions" "$WAKE_MODE" "env WAKE_MODE overrides server"
+assert_eq "dm-myagent" "$WAKE_CHANNELS" "env WAKE_CHANNELS overrides server"
 assert_eq "3" "$COMMS_POLL_INTERVAL" "poll_interval still updated from server"
 
 # Test 13: returns 1 when comms not configured
 SAVE_URL="$COMMS_URL"
 unset COMMS_URL
-WAKE_MODE=""
-_ENV_WAKE_MODE=""
+WAKE_CHANNELS=""
+_ENV_WAKE_CHANNELS=""
 fetch_config; RC=$?
 assert_eq "1" "$RC" "returns 1 when COMMS_URL not set"
 export COMMS_URL="$SAVE_URL"
 
-# Test 14: defaults when server returns defaults
-set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_mode": "mentions", "poll_interval": 1}}'
-WAKE_MODE=""
-_ENV_WAKE_MODE=""
+# Test 14: defaults when server returns empty wake_channels
+set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_channels": "", "poll_interval": 1}}'
+WAKE_CHANNELS=""
+_ENV_WAKE_CHANNELS=""
 COMMS_POLL_INTERVAL=5
 fetch_config; RC=$?
-assert_eq "mentions" "$WAKE_MODE" "sets default wake_mode from server"
+assert_eq "" "$WAKE_CHANNELS" "empty wake_channels stays empty"
 assert_eq "1" "$COMMS_POLL_INTERVAL" "sets default poll_interval from server"
 
 # Test 15: fetch_config sets MAX_TURNS from server
-set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_mode": "mentions", "poll_interval": 1, "max_turns": 50, "heartbeat_interval": 3600}}'
-WAKE_MODE=""
-_ENV_WAKE_MODE=""
+set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_channels": "", "poll_interval": 1, "max_turns": 50, "heartbeat_interval": 3600}}'
+WAKE_CHANNELS=""
+_ENV_WAKE_CHANNELS=""
 MAX_TURNS=200
 INTERVAL=300
 fetch_config; RC=$?
@@ -366,9 +366,9 @@ assert_eq "50" "$MAX_TURNS" "sets MAX_TURNS from server"
 assert_eq "3600" "$INTERVAL" "sets INTERVAL (heartbeat_interval) from server"
 
 # Test 16: server omits new keys — env defaults preserved
-set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_mode": "mentions", "poll_interval": 1}}'
-WAKE_MODE=""
-_ENV_WAKE_MODE=""
+set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_channels": "", "poll_interval": 1}}'
+WAKE_CHANNELS=""
+_ENV_WAKE_CHANNELS=""
 MAX_TURNS=200
 INTERVAL=15000
 fetch_config; RC=$?
@@ -376,42 +376,43 @@ assert_eq "200" "$MAX_TURNS" "MAX_TURNS preserved when server omits it"
 assert_eq "15000" "$INTERVAL" "INTERVAL preserved when server omits heartbeat_interval"
 
 # Reset for next tests
-WAKE_MODE=""
-_ENV_WAKE_MODE=""
+WAKE_CHANNELS=""
+_ENV_WAKE_CHANNELS=""
 
 echo ""
 
-# ── wait_for_wake with WAKE_MODE=channel ──
+# ── wait_for_wake with WAKE_CHANNELS ──
 
-echo "wait_for_wake() with WAKE_MODE=channel:"
+echo "wait_for_wake() with WAKE_CHANNELS:"
 
-# Test 15: channel mode — wakes on any new message (no mentions needed)
+# Test 15: wake_channels — wakes when server returns messages
 set_mock_response "poll" '{"total": 400, "unread": 0, "channels": 3}'
 set_mock_response "unread" '{"channels": []}'
 (
     sleep 0.5
     set_mock_response "poll" '{"total": 401, "unread": 1, "channels": 3}'
+    set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 1, "messages": [{"ts": "2026-01-01T00:00:00", "sender": "test", "message": "hello"}]}]}'
 ) &
 UPD=$!
 INTERVAL=4
 COMMS_POLL_INTERVAL=0.2
-WAKE_MODE="channel"
+WAKE_CHANNELS="*"
 SECONDS=0
 wait_for_wake; RC=$?
 wait "$UPD" 2>/dev/null || true
-assert_eq "0" "$RC" "channel mode: wakes on any new message"
+assert_eq "0" "$RC" "wake_channels: wakes when server returns messages"
 
-# Test 16: channel mode — still times out with no messages
+# Test 16: wake_channels — still times out with no messages
 set_mock_response "poll" '{"total": 500, "unread": 0, "channels": 3}'
 set_mock_response "unread" '{"channels": []}'
 INTERVAL=1
 COMMS_POLL_INTERVAL=0.2
-WAKE_MODE="channel"
+WAKE_CHANNELS="*"
 SECONDS=0
 wait_for_wake; RC=$?
-assert_eq "1" "$RC" "channel mode: times out with no new messages"
+assert_eq "1" "$RC" "wake_channels: times out with no new messages"
 
-# Test 17: mentions mode — still ignores non-mention messages
+# Test 17: no wake_channels — ignores non-mention messages
 set_mock_response "poll" '{"total": 600, "unread": 0, "channels": 3}'
 set_mock_response "unread" '{"channels": []}'
 (
@@ -421,14 +422,14 @@ set_mock_response "unread" '{"channels": []}'
 UPD=$!
 INTERVAL=2
 COMMS_POLL_INTERVAL=0.2
-WAKE_MODE="mentions"
+WAKE_CHANNELS=""
 SECONDS=0
 wait_for_wake; RC=$?
 wait "$UPD" 2>/dev/null || true
-assert_eq "1" "$RC" "mentions mode: ignores non-mention messages"
+assert_eq "1" "$RC" "no wake_channels: ignores non-mention messages"
 
 # Reset
-WAKE_MODE=""
+WAKE_CHANNELS=""
 
 echo ""
 

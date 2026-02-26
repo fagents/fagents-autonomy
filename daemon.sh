@@ -13,7 +13,7 @@
 #   PROMPT_HEARTBEAT       Heartbeat prompt file (default: heartbeat.md)
 #   PROMPT_MSG             Message wake prompt file (default: heartbeat-msg.md)
 #   COMMS_POLL_INTERVAL=1  Seconds between HTTP polls (default: 1)
-#   WAKE_MODE=mentions     mentions|channel (default: from server config)
+#   WAKE_CHANNELS=ch1,ch2  Wake on all msgs in these channels (default: mentions-only)
 #   MAX_TURNS=50           Max turns per heartbeat
 #
 # Prompt overrides: place files in $PROJECT_DIR/prompts/ to override defaults.
@@ -36,7 +36,7 @@ AGENT="${AGENT:-}"
 COMMS_URL="${COMMS_URL:-}"
 COMMS_TOKEN="${COMMS_TOKEN:-}"
 COMMS_POLL_INTERVAL="${COMMS_POLL_INTERVAL:-1}"
-WAKE_MODE="${WAKE_MODE:-}"  # mentions|channel — env overrides server config
+WAKE_CHANNELS="${WAKE_CHANNELS:-}"  # comma-separated wake channels, * for all
 
 if [ -z "$AGENT" ] || [ -z "$COMMS_URL" ] || [ -z "$COMMS_TOKEN" ]; then
     echo "fagents daemon — autonomous agent loop"
@@ -81,10 +81,10 @@ refresh_channels() {
     return 1
 }
 
-# Snapshot WAKE_MODE from env — if user set it, server config won't override.
-_ENV_WAKE_MODE="$WAKE_MODE"
+# Snapshot WAKE_CHANNELS from env — if user set it, server config won't override.
+_ENV_WAKE_CHANNELS="$WAKE_CHANNELS"
 
-# Fetch per-agent config from server. Updates WAKE_MODE, COMMS_POLL_INTERVAL,
+# Fetch per-agent config from server. Updates WAKE_CHANNELS, COMMS_POLL_INTERVAL,
 # MAX_TURNS, and INTERVAL from server config. Env vars override where noted.
 fetch_config() {
     if [ -z "$COMMS_URL" ] || [ -z "$COMMS_TOKEN" ]; then
@@ -93,14 +93,14 @@ fetch_config() {
     local resp
     resp=$(curl -s --max-time 5 -H "Authorization: Bearer $COMMS_TOKEN" \
         "$COMMS_URL/api/agents/$AGENT/config" 2>/dev/null) || return 1
-    local server_wake_mode server_poll_interval server_max_turns server_heartbeat
-    server_wake_mode=$(echo "$resp" | jq -r '.config.wake_mode // empty' 2>/dev/null) || true
+    local server_wake_channels server_poll_interval server_max_turns server_heartbeat
+    server_wake_channels=$(echo "$resp" | jq -r '.config.wake_channels // empty' 2>/dev/null) || true
     server_poll_interval=$(echo "$resp" | jq -r '.config.poll_interval // empty' 2>/dev/null) || true
     server_max_turns=$(echo "$resp" | jq -r '.config.max_turns // empty' 2>/dev/null) || true
     server_heartbeat=$(echo "$resp" | jq -r '.config.heartbeat_interval // empty' 2>/dev/null) || true
-    # WAKE_MODE: env overrides server
-    if [ -z "$_ENV_WAKE_MODE" ] && [ -n "$server_wake_mode" ]; then
-        WAKE_MODE="$server_wake_mode"
+    # WAKE_CHANNELS: env overrides server
+    if [ -z "$_ENV_WAKE_CHANNELS" ] && [ -n "$server_wake_channels" ]; then
+        WAKE_CHANNELS="$server_wake_channels"
     fi
     # Poll interval: always use server value (env default is just fallback)
     if [ -n "$server_poll_interval" ]; then
@@ -215,9 +215,9 @@ fetch_unread() {
     if [ -z "$COMMS_URL" ] || [ -z "$COMMS_TOKEN" ]; then
         return 1
     fi
-    # In mentions mode, only fetch @mentions. In channel mode, fetch all unread.
+    # Always fetch mentions; also fetch all msgs from wake_channels
     local url="$COMMS_URL/api/unread?mark_read=1"
-    [ "${WAKE_MODE:-mentions}" = "mentions" ] && url="$url&mentions=1"
+    [ -n "$WAKE_CHANNELS" ] && url="$url&wake_channels=$WAKE_CHANNELS"
     local resp
     resp=$(curl -s --max-time 5 -H "Authorization: Bearer $COMMS_TOKEN" \
         "$url" 2>/dev/null) || return 1
@@ -238,9 +238,8 @@ fetch_unread() {
 
 # Wait for message or timeout.
 # Returns 0 if wake triggered (message), 1 if timeout (regular heartbeat).
-# WAKE_MODE controls behavior:
-#   mentions (default): only wake on @mentions/replies directed at this agent
-#   channel: wake on ANY new message in subscribed channels
+# Always wakes on @mentions/replies. WAKE_CHANNELS adds all-message wake
+# for specified channels (comma-separated, or * for all).
 wait_for_wake() {
     local deadline=$((SECONDS + INTERVAL))
 
@@ -269,15 +268,8 @@ wait_for_wake() {
             # If total changed and we have valid counts, check for wake
             elif [ "$current_total" != "$baseline_total" ] && \
                  [ "$current_total" != "-1" ] && [ "$baseline_total" != "-1" ]; then
-                if [ "${WAKE_MODE:-mentions}" = "channel" ]; then
-                    # Channel mode: wake on any new message
-                    fetch_unread || true  # still try to grab mentions for context
+                if fetch_unread; then
                     return 0
-                else
-                    # Mentions mode: only wake if messages are directed at us
-                    if fetch_unread; then
-                        return 0
-                    fi
                 fi
                 # New messages but not for us — update baseline, keep sleeping
                 baseline_total="$current_total"
@@ -306,9 +298,9 @@ run_claude() {
 
 # Fetch per-agent config from server before first session
 if fetch_config; then
-    log "Config from server: wake_mode=${WAKE_MODE:-mentions}, poll_interval=$COMMS_POLL_INTERVAL, max_turns=$MAX_TURNS, heartbeat=$INTERVAL"
+    log "Config from server: wake_channels=${WAKE_CHANNELS:-<mentions-only>}, poll_interval=$COMMS_POLL_INTERVAL, max_turns=$MAX_TURNS, heartbeat=$INTERVAL"
 else
-    log "Using defaults: wake_mode=${WAKE_MODE:-mentions}, poll_interval=$COMMS_POLL_INTERVAL"
+    log "Using defaults: wake_channels=${WAKE_CHANNELS:-<mentions-only>}, poll_interval=$COMMS_POLL_INTERVAL"
 fi
 
 log "fagents daemon starting (agent: $AGENT, PID: $$, interval: ${INTERVAL}s, max-turns: $MAX_TURNS, channels: $CHANNELS)"
