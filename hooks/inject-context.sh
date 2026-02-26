@@ -17,7 +17,11 @@ if [ -n "$CTX_OUT" ]; then
     echo "Context: ${pct}% (${label_long:-UNKNOWN}) ~${used_tokens}tok / ${ctx_size}"
     # Awareness: compaction detection
     COMPACT=$("$AUTONOMY_DIR/awareness/compaction.sh" "$pct" 2>/dev/null) || true
-    [ -n "$COMPACT" ] && echo "$COMPACT"
+    if [ -n "$COMPACT" ]; then
+        echo "$COMPACT"
+        BOOTLOADER=$("$AUTONOMY_DIR/awareness/bootloader-check.sh" 2>/dev/null) || true
+        [ -n "$BOOTLOADER" ] && echo "$BOOTLOADER"
+    fi
 fi
 
 # Awareness: git (incoming commits)

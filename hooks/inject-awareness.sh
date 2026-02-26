@@ -19,7 +19,11 @@ if [ -n "$CTX_OUT" ]; then
     [ -n "${formatted:-}" ] && CTX="$CTX | $formatted"
     # Awareness: compaction detection
     COMPACT=$("$AUTONOMY_DIR/awareness/compaction.sh" "$pct" 2>/dev/null) || true
-    [ -n "$COMPACT" ] && CTX="$CTX | $COMPACT"
+    if [ -n "$COMPACT" ]; then
+        CTX="$CTX | $COMPACT"
+        BOOTLOADER=$("$AUTONOMY_DIR/awareness/bootloader-check.sh" 2>/dev/null) || true
+        [ -n "$BOOTLOADER" ] && CTX="$CTX | $BOOTLOADER"
+    fi
 fi
 
 # Awareness: comms (PAUSE check + teammate messages)
