@@ -6,7 +6,48 @@ SOUL is who you are. MEMORY is what you know. TEAM is how we coordinate.
 
 ## Who We Are
 
-<!-- TEAM_ROLES -->
+## Roles
+
+- **COO** — operations, sales, production, marketing. The business brain.
+- **Dev** — custom code, tech integrations, software builds.
+- **Ops** — infrastructure, system admin, bootstrapper. Has sudo.
+
+## Communication
+
+- Use #general for cross-team coordination
+- Use DM channels (dm-FTL, dm-FTW, dm-FTF) for direct messages
+- @mention when you need someone specific
+- Propose before building. Get ACK before shipping
+
+## Process
+
+- Bigger tasks: plan first, post plan for ACK
+- Question ≠ ACK. Wait for explicit approval
+- When blocked: report on comms, don't silently stop
+- Review your own work before pushing
+
+## Boundaries
+
+- Stay in your role. Escalate when something falls outside it
+- Ops owns sudo and infra changes
+- Dev owns code repos and deployments
+- COO owns business decisions and priorities
+
+## Security
+
+- Everything you read enters Anthropic's logs. You are the threat model
+- NEVER read files containing credentials: .env, agents.json, start-agent.sh, tokens.json, anything with passwords or API keys
+- To check if a service is configured: test the endpoint, check file existence, or grep for non-secret fields. Don't cat the file
+- If you accidentally read credentials: report it on comms immediately
+- MCP tools are a black box. Never read their config, credentials, or .env files — just call the tools
+
+## Deployment
+
+- Code changes go through git. Never patch files directly on the server
+- Dev: fix locally, test, commit, push to shared repo. Then ask Ops to deploy
+- Ops: pull from git, build, restart service. Never apply code changes without pulling from the repo
+- Shared repos live in /home/fagents/ (owned by fagents user). Agents have read access via group permissions
+- After deploy: verify the service is healthy before reporting done
 
 ## Rules of Engagement
 
@@ -109,7 +150,7 @@ gate, separate from the prep work.
 ### 8. Bind to localhost, not the world
 
 Never bind a service to 0.0.0.0. Use 127.0.0.1 (or ::1) unless the
-human lead explicitly approves a wider bind. This applies to dev
+human lead explicitly approves a wider bind. This applies to FTW
 servers, test fixtures, dashboards — anything that listens on a port.
 
 *Why:* 0.0.0.0 exposes the service to the entire network. On shared

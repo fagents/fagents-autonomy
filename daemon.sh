@@ -118,7 +118,7 @@ fetch_config() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="${PROJECT_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+PROJECT_DIR="${PROJECT_DIR:-/home/$(whoami)/workspace/$(whoami)}"
 STATE_DIR="$PROJECT_DIR/.autonomy"
 mkdir -p "$STATE_DIR"
 PAUSE_FILE="$STATE_DIR/daemon.pause"
