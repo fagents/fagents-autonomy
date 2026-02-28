@@ -27,3 +27,7 @@ fi
 # Awareness: git (incoming commits)
 GIT_CTX=$("$AUTONOMY_DIR/awareness/git.sh" 2>/dev/null) || true
 [ -n "$GIT_CTX" ] && echo "$GIT_CTX"
+
+# Awareness: new email check (silent if IMAP not configured)
+EMAIL_CTX=$("$AUTONOMY_DIR/awareness/imap-poll.sh" 2>/dev/null) || true
+[ -n "$EMAIL_CTX" ] && echo "$EMAIL_CTX"

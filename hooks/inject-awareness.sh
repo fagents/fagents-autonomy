@@ -30,6 +30,10 @@ fi
 COMMS_CTX=$("$AUTONOMY_DIR/awareness/comms.sh" 2>/dev/null) || true
 [ -n "$COMMS_CTX" ] && CTX="$CTX | $COMMS_CTX"
 
+# Awareness: new email check (silent if IMAP not configured)
+EMAIL_CTX=$("$AUTONOMY_DIR/awareness/imap-poll.sh" 2>/dev/null) || true
+[ -n "$EMAIL_CTX" ] && CTX="$CTX | $EMAIL_CTX"
+
 # Output as PreToolUse JSON
 python3 -c "
 import json, sys
