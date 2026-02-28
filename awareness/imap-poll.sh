@@ -18,4 +18,4 @@ STATE_FILE="$STATE_DIR/imap-last-uid"
 LAST_UID=$(cat "$STATE_FILE" 2>/dev/null | tr -d '[:space:]')
 [ -n "$LAST_UID" ] || exit 0
 
-echo "New email UID $LAST_UID in INBOX: call gate_email(uid) for each UID > ${LAST_UID}. Update ${STATE_FILE} after processing."
+echo "Last INBOX UID processed: ${LAST_UID}. If new email may have arrived, call gate_email for each UID > ${LAST_UID}, then update ${STATE_FILE}."
