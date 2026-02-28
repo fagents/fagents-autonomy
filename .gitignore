@@ -1,4 +1,1 @@
 # No runtime state here anymore — all state lives in $PROJECT_DIR/.autonomy/
-
-# Local-only files — not for public GitHub
-TEAM.md
