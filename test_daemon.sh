@@ -956,6 +956,11 @@ echo ""
 echo "activity-push.sh:"
 
 AP_SCRIPT="$SCRIPT_DIR/hooks/activity-push.sh"
+run_ap() {
+    rm -f "$MOCK_DIR/last-health-post.json"
+    AUTONOMY_DIR="$AP_FAKE_DIR" AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$AP_SCRIPT" 2>/dev/null
+}
 
 # Setup: fake AUTONOMY_DIR with mock context.sh
 AP_FAKE_DIR=$(mktemp -d)
@@ -995,28 +1000,19 @@ OUTPUT=$(AUTONOMY_DIR="$AP_FAKE_DIR" AGENT="TestAgent" COMMS_URL="http://127.0.0
 assert_empty "$OUTPUT" "activity-push: no COMMS_TOKEN — silent exit"
 
 # Test: valid JSON stdin — tool_name extracted, POST sent
-rm -f "$MOCK_DIR/last-health-post.json"
-echo '{"tool_name":"Read","tool_input":{"file":"/tmp/x"}}' | \
-    AUTONOMY_DIR="$AP_FAKE_DIR" AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
-    bash "$AP_SCRIPT" 2>/dev/null
+echo '{"tool_name":"Read","tool_input":{"file":"/tmp/x"}}' | run_ap
 capture_health_post
 assert_contains "$HEALTH_BODY" '"last_tool":"Read"' "activity-push: tool_name extracted from JSON"
 assert_contains "$HEALTH_BODY" '"context_pct":42' "activity-push: context_pct in POST body"
 assert_contains "$HEALTH_BODY" '"status":"active"' "activity-push: status=active in POST body"
 
 # Test: invalid JSON stdin — tool falls back to "?"
-rm -f "$MOCK_DIR/last-health-post.json"
-echo 'not json at all' | \
-    AUTONOMY_DIR="$AP_FAKE_DIR" AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
-    bash "$AP_SCRIPT" 2>/dev/null
+echo 'not json at all' | run_ap
 capture_health_post
 assert_contains "$HEALTH_BODY" '"last_tool":"?"' "activity-push: invalid JSON — tool falls back to ?"
 
 # Test: empty stdin — tool falls back to "?"
-rm -f "$MOCK_DIR/last-health-post.json"
-echo '' | \
-    AUTONOMY_DIR="$AP_FAKE_DIR" AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
-    bash "$AP_SCRIPT" 2>/dev/null
+echo '' | run_ap
 capture_health_post
 assert_contains "$HEALTH_BODY" '"last_tool":"?"' "activity-push: empty stdin — tool falls back to ?"
 
@@ -1038,6 +1034,11 @@ echo ""
 echo "session-stop.sh:"
 
 SS_SCRIPT="$SCRIPT_DIR/hooks/session-stop.sh"
+run_ss() {
+    rm -f "$MOCK_DIR/last-health-post.json"
+    AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
+    bash "$SS_SCRIPT" 2>/dev/null
+}
 
 # Test: no AGENT — exits 0, WARNING on stderr
 SAVE_AGENT="$AGENT"
@@ -1078,26 +1079,17 @@ MSG_PATH=$(cat "$MOCK_DIR/last-msg-path.txt" 2>/dev/null || echo "")
 assert_contains "$MSG_PATH" "/api/channels/general/messages" "session-stop: defaults to general channel"
 
 # Test: invalid JSON — reason falls back to "unknown"
-rm -f "$MOCK_DIR/last-health-post.json"
-echo 'not json' | \
-    AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
-    bash "$SS_SCRIPT" 2>/dev/null
+echo 'not json' | run_ss
 capture_health_post
 assert_contains "$HEALTH_BODY" "unknown" "session-stop: invalid JSON — reason=unknown"
 
 # Test: multi-line message — only first line used
-rm -f "$MOCK_DIR/last-health-post.json"
-printf '{"last_assistant_message":"First line\\nSecond line\\nThird line"}' | \
-    AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
-    bash "$SS_SCRIPT" 2>/dev/null
+printf '{"last_assistant_message":"First line\\nSecond line\\nThird line"}' | run_ss
 capture_health_post
 assert_contains "$HEALTH_BODY" "First line" "session-stop: multi-line — uses first line"
 
 # Test: empty last_assistant_message — falls back to "no message"
-rm -f "$MOCK_DIR/last-health-post.json"
-echo '{"last_assistant_message":""}' | \
-    AGENT="TestAgent" COMMS_URL="http://127.0.0.1:$PORT" COMMS_TOKEN="test-token" \
-    bash "$SS_SCRIPT" 2>/dev/null
+echo '{"last_assistant_message":""}' | run_ss
 capture_health_post
 assert_contains "$HEALTH_BODY" "no message" "session-stop: empty message — falls back to 'no message'"
 
