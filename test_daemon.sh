@@ -1328,10 +1328,8 @@ echo "deploy-hooks merge:"
 
 DH_TMP=$(mktemp -d)
 
-# Test: merge hooks into existing settings — preserves other keys
-echo '{"hooks": {"PreToolUse": [{"matcher": ".*"}]}}' > "$DH_TMP/hooks.json"
-echo '{"permissions": {"allow": ["Read"]}, "hooks": {"old": []}}' > "$DH_TMP/settings.json"
-python3 -c "
+merge_hooks() {
+    python3 -c "
 import json, sys
 with open(sys.argv[1]) as f: hooks_config = json.load(f)
 try:
@@ -1341,7 +1339,13 @@ settings['hooks'] = hooks_config['hooks']
 with open(sys.argv[2], 'w') as f:
     json.dump(settings, f, indent=2)
     f.write('\n')
-" "$DH_TMP/hooks.json" "$DH_TMP/settings.json"
+" "$1" "$2"
+}
+
+# Test: merge hooks into existing settings — preserves other keys
+echo '{"hooks": {"PreToolUse": [{"matcher": ".*"}]}}' > "$DH_TMP/hooks.json"
+echo '{"permissions": {"allow": ["Read"]}, "hooks": {"old": []}}' > "$DH_TMP/settings.json"
+merge_hooks "$DH_TMP/hooks.json" "$DH_TMP/settings.json"
 MERGED=$(cat "$DH_TMP/settings.json")
 assert_contains "$MERGED" '"permissions"' "deploy-merge: preserves existing keys"
 assert_contains "$MERGED" '"PreToolUse"' "deploy-merge: new hooks present"
@@ -1353,34 +1357,14 @@ fi
 
 # Test: merge into non-existent settings — creates new
 rm -f "$DH_TMP/new-settings.json"
-python3 -c "
-import json, sys
-with open(sys.argv[1]) as f: hooks_config = json.load(f)
-try:
-    with open(sys.argv[2]) as f: settings = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError): settings = {}
-settings['hooks'] = hooks_config['hooks']
-with open(sys.argv[2], 'w') as f:
-    json.dump(settings, f, indent=2)
-    f.write('\n')
-" "$DH_TMP/hooks.json" "$DH_TMP/new-settings.json"
+merge_hooks "$DH_TMP/hooks.json" "$DH_TMP/new-settings.json"
 assert_eq "0" "$?" "deploy-merge: creates settings from scratch"
 NEW_MERGED=$(cat "$DH_TMP/new-settings.json")
 assert_contains "$NEW_MERGED" '"PreToolUse"' "deploy-merge: hooks in new file"
 
 # Test: merge into malformed settings — treats as empty
 echo 'not json{{{' > "$DH_TMP/bad-settings.json"
-python3 -c "
-import json, sys
-with open(sys.argv[1]) as f: hooks_config = json.load(f)
-try:
-    with open(sys.argv[2]) as f: settings = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError): settings = {}
-settings['hooks'] = hooks_config['hooks']
-with open(sys.argv[2], 'w') as f:
-    json.dump(settings, f, indent=2)
-    f.write('\n')
-" "$DH_TMP/hooks.json" "$DH_TMP/bad-settings.json"
+merge_hooks "$DH_TMP/hooks.json" "$DH_TMP/bad-settings.json"
 BAD_MERGED=$(cat "$DH_TMP/bad-settings.json")
 assert_contains "$BAD_MERGED" '"PreToolUse"' "deploy-merge: recovers from malformed settings"
 
