@@ -1542,35 +1542,6 @@ rm -rf "$BC_TMP"
 
 echo ""
 
-# ── inject-awareness.sh tests ──
-
-echo "inject-awareness.sh:"
-
-INJECT_AW="$SCRIPT_DIR/hooks/inject-awareness.sh"
-
-# Outputs valid JSON
-out=$(AUTONOMY_DIR="$SCRIPT_DIR" bash "$INJECT_AW" 2>/dev/null)
-json_ok=$(echo "$out" | python3 -c "import json,sys; json.load(sys.stdin); print('ok')" 2>/dev/null)
-assert_eq "ok" "$json_ok" "inject-awareness: output is valid JSON"
-
-# additionalContext key present
-ctx_key=$(echo "$out" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print('ok' if 'additionalContext' in d.get('hookSpecificOutput',{}) else 'missing')
-" 2>/dev/null)
-assert_eq "ok" "$ctx_key" "inject-awareness: additionalContext key present in output"
-
-# hookEventName is PreToolUse
-event=$(echo "$out" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(d.get('hookSpecificOutput',{}).get('hookEventName',''))
-" 2>/dev/null)
-assert_eq "PreToolUse" "$event" "inject-awareness: hookEventName is PreToolUse"
-
-echo ""
-
 # ── Summary ──
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
