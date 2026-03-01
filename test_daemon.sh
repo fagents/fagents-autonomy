@@ -62,6 +62,12 @@ make_silent_mock() {
     chmod +x "$dir/awareness/$script"
 }
 
+make_echo_mock() {
+    local dir="$1" script="$2" content="$3"
+    printf '#!/bin/bash\necho "%s"\n' "$content" > "$dir/awareness/$script"
+    chmod +x "$dir/awareness/$script"
+}
+
 run_wake() {
     INTERVAL="$1"
     COMMS_POLL_INTERVAL=0.2
@@ -1108,11 +1114,7 @@ IA_DIR=$(mktemp -d)
 mkdir -p "$IA_DIR/awareness"
 
 # Mock time.sh
-cat > "$IA_DIR/awareness/time.sh" << 'MOCK'
-#!/bin/bash
-echo "14:30:00 EET"
-MOCK
-chmod +x "$IA_DIR/awareness/time.sh"
+make_echo_mock "$IA_DIR" time.sh "14:30:00 EET"
 
 # Mock context.sh
 cat > "$IA_DIR/awareness/context.sh" << 'MOCK'
@@ -1148,20 +1150,12 @@ HOOK_EVENT=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.s
 assert_eq "PreToolUse" "$HOOK_EVENT" "inject-awareness: hookEventName=PreToolUse"
 
 # Test: comms alert appended when present
-cat > "$IA_DIR/awareness/comms.sh" << 'MOCK'
-#!/bin/bash
-echo "PAUSE active"
-MOCK
-chmod +x "$IA_DIR/awareness/comms.sh"
+make_echo_mock "$IA_DIR" comms.sh "PAUSE active"
 OUTPUT=$(AUTONOMY_DIR="$IA_DIR" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
 assert_contains "$OUTPUT" "PAUSE active" "inject-awareness: comms alert in output"
 
 # Test: compaction warning appended when triggered
-cat > "$IA_DIR/awareness/compaction.sh" << 'MOCK'
-#!/bin/bash
-echo "COMPACTION DETECTED"
-MOCK
-chmod +x "$IA_DIR/awareness/compaction.sh"
+make_echo_mock "$IA_DIR" compaction.sh "COMPACTION DETECTED"
 OUTPUT=$(AUTONOMY_DIR="$IA_DIR" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
 assert_contains "$OUTPUT" "COMPACTION DETECTED" "inject-awareness: compaction warning in output"
 
@@ -1265,11 +1259,7 @@ IC_SCRIPT="$SCRIPT_DIR/hooks/inject-context.sh"
 IC_DIR=$(mktemp -d)
 mkdir -p "$IC_DIR/awareness"
 
-cat > "$IC_DIR/awareness/time.sh" << 'MOCK'
-#!/bin/bash
-echo "20:15:00 EET"
-MOCK
-chmod +x "$IC_DIR/awareness/time.sh"
+make_echo_mock "$IC_DIR" time.sh "20:15:00 EET"
 
 cat > "$IC_DIR/awareness/context.sh" << 'MOCK'
 #!/bin/bash
@@ -1293,11 +1283,7 @@ assert_contains "$OUTPUT" "Context: 63% (WARMING)" "inject-context: context pct 
 assert_contains "$OUTPUT" "~126000tok" "inject-context: tokens in context line"
 
 # Test: compaction message shown when triggered
-cat > "$IC_DIR/awareness/compaction.sh" << 'MOCK'
-#!/bin/bash
-echo "COMPACTION: read SOUL.md, TEAM.md, MEMORY.md"
-MOCK
-chmod +x "$IC_DIR/awareness/compaction.sh"
+make_echo_mock "$IC_DIR" compaction.sh "COMPACTION: read SOUL.md, TEAM.md, MEMORY.md"
 OUTPUT=$(AUTONOMY_DIR="$IC_DIR" bash "$IC_SCRIPT" 2>/dev/null) || true
 assert_contains "$OUTPUT" "COMPACTION" "inject-context: compaction warning shown"
 
