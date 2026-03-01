@@ -896,32 +896,30 @@ make_jsonl() {
 EOF
 }
 
+run_ctx() {
+    make_jsonl "$@"
+    OUTPUT=$("$CTX_INT_SCRIPT")
+    eval "$OUTPUT"
+}
+
 # Test: OK label (< 40%)
-make_jsonl 30000 0 0
-OUTPUT=$("$CTX_INT_SCRIPT")
-eval "$OUTPUT"
+run_ctx 30000 0 0
 assert_eq "OK" "$label" "ctx.sh: label=OK for 15%"
 assert_eq "HEALTHY" "$label_long" "ctx.sh: label_long=HEALTHY for 15%"
 assert_contains "$formatted" "OK" "ctx.sh: formatted contains OK"
 
 # Test: WARM label (40-69%)
-make_jsonl 80000 0 0
-OUTPUT=$("$CTX_INT_SCRIPT")
-eval "$OUTPUT"
+run_ctx 80000 0 0
 assert_eq "WARM" "$label" "ctx.sh: label=WARM for 40%"
 assert_eq "WARMING" "$label_long" "ctx.sh: label_long=WARMING for 40%"
 
 # Test: HEAVY label (70-89%)
-make_jsonl 100000 20000 20000
-OUTPUT=$("$CTX_INT_SCRIPT")
-eval "$OUTPUT"
+run_ctx 100000 20000 20000
 assert_eq "HEAVY" "$label" "ctx.sh: label=HEAVY for 70%"
 assert_eq "HEAVY" "$label_long" "ctx.sh: label_long=HEAVY for 70%"
 
 # Test: CRIT label (90%+)
-make_jsonl 100000 40000 50000
-OUTPUT=$("$CTX_INT_SCRIPT")
-eval "$OUTPUT"
+run_ctx 100000 40000 50000
 assert_eq "CRIT" "$label" "ctx.sh: label=CRIT for 95%"
 assert_eq "CRITICAL" "$label_long" "ctx.sh: label_long=CRITICAL for 95%"
 
