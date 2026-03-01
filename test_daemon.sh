@@ -56,6 +56,12 @@ capture_health_post() {
     HEALTH_BODY=$(cat "$MOCK_DIR/last-health-post.json" 2>/dev/null || echo "")
 }
 
+make_silent_mock() {
+    local dir="$1" script="$2"
+    printf '#!/bin/bash\nexit 0\n' > "$dir/awareness/$script"
+    chmod +x "$dir/awareness/$script"
+}
+
 # ── Mock HTTP server ──
 
 MOCK_PORT=""
@@ -1137,18 +1143,10 @@ MOCK
 chmod +x "$IA_DIR/awareness/context.sh"
 
 # Mock compaction.sh (no output = no compaction)
-cat > "$IA_DIR/awareness/compaction.sh" << 'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-chmod +x "$IA_DIR/awareness/compaction.sh"
+make_silent_mock "$IA_DIR" compaction.sh
 
 # Mock comms.sh (no output = no alerts)
-cat > "$IA_DIR/awareness/comms.sh" << 'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-chmod +x "$IA_DIR/awareness/comms.sh"
+make_silent_mock "$IA_DIR" comms.sh
 
 # Test: full output is valid JSON
 OUTPUT=$(AUTONOMY_DIR="$IA_DIR" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
@@ -1299,17 +1297,8 @@ echo "ctx_size='200000'"
 MOCK
 chmod +x "$IC_DIR/awareness/context.sh"
 
-cat > "$IC_DIR/awareness/compaction.sh" << 'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-chmod +x "$IC_DIR/awareness/compaction.sh"
-
-cat > "$IC_DIR/awareness/git.sh" << 'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-chmod +x "$IC_DIR/awareness/git.sh"
+make_silent_mock "$IC_DIR" compaction.sh
+make_silent_mock "$IC_DIR" git.sh
 
 # Test: time in output
 OUTPUT=$(AUTONOMY_DIR="$IC_DIR" bash "$IC_SCRIPT" 2>/dev/null) || true
