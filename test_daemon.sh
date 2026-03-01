@@ -1467,6 +1467,110 @@ assert_eq "ok" "$BOOL_CHECK" "process.sh: boolean values are True/False not stri
 
 echo ""
 
+# ── imap-poll.sh tests ──
+
+echo "imap-poll.sh:"
+
+IMAP_POLL="$SCRIPT_DIR/awareness/imap-poll.sh"
+IMAP_TMP=$(mktemp -d)
+IMAP_STATE_DIR="$IMAP_TMP/.autonomy"
+mkdir -p "$IMAP_STATE_DIR"
+
+# No state file — silent
+out=$(PROJECT_DIR="$IMAP_TMP" bash "$IMAP_POLL" 2>/dev/null)
+assert_empty "$out" "imap-poll: silent when no state file"
+
+# State file exists but empty — silent
+touch "$IMAP_STATE_DIR/imap-last-uid"
+out=$(PROJECT_DIR="$IMAP_TMP" bash "$IMAP_POLL" 2>/dev/null)
+assert_empty "$out" "imap-poll: silent when state file is empty"
+
+# State file has whitespace only — silent
+echo "   " > "$IMAP_STATE_DIR/imap-last-uid"
+out=$(PROJECT_DIR="$IMAP_TMP" bash "$IMAP_POLL" 2>/dev/null)
+assert_empty "$out" "imap-poll: silent when state file is whitespace only"
+
+# State file has valid UID — emits reminder
+echo "42" > "$IMAP_STATE_DIR/imap-last-uid"
+out=$(PROJECT_DIR="$IMAP_TMP" bash "$IMAP_POLL" 2>/dev/null)
+assert_contains "$out" "42" "imap-poll: reminder includes last UID"
+assert_contains "$out" "gate_email" "imap-poll: reminder mentions gate_email"
+
+# UID with surrounding whitespace — still works
+echo "  99  " > "$IMAP_STATE_DIR/imap-last-uid"
+out=$(PROJECT_DIR="$IMAP_TMP" bash "$IMAP_POLL" 2>/dev/null)
+assert_contains "$out" "99" "imap-poll: trims whitespace from UID"
+
+rm -rf "$IMAP_TMP"
+
+echo ""
+
+# ── bootloader-check.sh tests ──
+
+echo "bootloader-check.sh:"
+
+BOOTLOADER_CHECK="$SCRIPT_DIR/awareness/bootloader-check.sh"
+BC_TMP=$(mktemp -d)
+mkdir -p "$BC_TMP/.autonomy" "$BC_TMP/memory"
+
+# Below thresholds — silent
+echo "short" > "$BC_TMP/memory/MEMORY.md"
+git -C "$BC_TMP" init --quiet 2>/dev/null
+git -C "$BC_TMP" commit --allow-empty -m "init" --quiet 2>/dev/null || true
+out=$(PROJECT_DIR="$BC_TMP" bash "$BOOTLOADER_CHECK" 2>/dev/null)
+assert_empty "$out" "bootloader-check: silent when below thresholds"
+
+# Already has bootloader/ dir — silent even if thresholds met
+mkdir -p "$BC_TMP/bootloader"
+# Add enough lines to memory to hit threshold
+python3 -c "print('\n' * 110)" >> "$BC_TMP/memory/MEMORY.md"
+out=$(PROJECT_DIR="$BC_TMP" bash "$BOOTLOADER_CHECK" 2>/dev/null)
+assert_empty "$out" "bootloader-check: silent when bootloader/ dir exists"
+rm -rf "$BC_TMP/bootloader"
+
+# Memory threshold reached — emits suggestion + creates flag
+out=$(PROJECT_DIR="$BC_TMP" bash "$BOOTLOADER_CHECK" 2>/dev/null)
+assert_contains "$out" "BOOTLOADER" "bootloader-check: emits suggestion when memory threshold met"
+[ -f "$BC_TMP/.autonomy/.bootloader-suggested" ]
+assert_eq "0" "$?" "bootloader-check: creates flag file on first suggestion"
+
+# Already suggested — silent
+out=$(PROJECT_DIR="$BC_TMP" bash "$BOOTLOADER_CHECK" 2>/dev/null)
+assert_empty "$out" "bootloader-check: silent after flag set (no repeat nag)"
+
+rm -rf "$BC_TMP"
+
+echo ""
+
+# ── inject-awareness.sh tests ──
+
+echo "inject-awareness.sh:"
+
+INJECT_AW="$SCRIPT_DIR/hooks/inject-awareness.sh"
+
+# Outputs valid JSON
+out=$(AUTONOMY_DIR="$SCRIPT_DIR" bash "$INJECT_AW" 2>/dev/null)
+json_ok=$(echo "$out" | python3 -c "import json,sys; json.load(sys.stdin); print('ok')" 2>/dev/null)
+assert_eq "ok" "$json_ok" "inject-awareness: output is valid JSON"
+
+# additionalContext key present
+ctx_key=$(echo "$out" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('ok' if 'additionalContext' in d.get('hookSpecificOutput',{}) else 'missing')
+" 2>/dev/null)
+assert_eq "ok" "$ctx_key" "inject-awareness: additionalContext key present in output"
+
+# hookEventName is PreToolUse
+event=$(echo "$out" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(d.get('hookSpecificOutput',{}).get('hookEventName',''))
+" 2>/dev/null)
+assert_eq "PreToolUse" "$event" "inject-awareness: hookEventName is PreToolUse"
+
+echo ""
+
 # ── Summary ──
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
