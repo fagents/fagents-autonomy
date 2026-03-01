@@ -62,6 +62,14 @@ make_silent_mock() {
     chmod +x "$dir/awareness/$script"
 }
 
+run_wake() {
+    INTERVAL="$1"
+    COMMS_POLL_INTERVAL=0.2
+    [[ $# -ge 2 ]] && WAKE_CHANNELS="$2"
+    SECONDS=0
+    wait_for_wake; RC=$?
+}
+
 # ── Mock HTTP server ──
 
 MOCK_PORT=""
@@ -279,10 +287,7 @@ set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count":
     set_mock_response "poll" '{"total": 101, "unread": 1, "channels": 3}'
 ) &
 UPD=$!
-INTERVAL=4
-COMMS_POLL_INTERVAL=0.2
-SECONDS=0
-wait_for_wake; RC=$?
+run_wake 4
 wait "$UPD" 2>/dev/null || true
 assert_eq "0" "$RC" "wakes on mention (return 0)"
 assert_contains "$WAKE_MENTIONS" "wake up" "WAKE_MENTIONS populated after wake"
@@ -295,20 +300,14 @@ set_mock_response "unread" '{"channels": []}'
     set_mock_response "poll" '{"total": 201, "unread": 1, "channels": 3}'
 ) &
 UPD=$!
-INTERVAL=2
-COMMS_POLL_INTERVAL=0.2
-SECONDS=0
-wait_for_wake; RC=$?
+run_wake 2
 wait "$UPD" 2>/dev/null || true
 assert_eq "1" "$RC" "doesn't wake on non-mention messages (return 1)"
 
 # Test 9: no new messages → timeout (return 1)
 set_mock_response "poll" '{"total": 300, "unread": 0, "channels": 3}'
 set_mock_response "unread" '{"channels": []}'
-INTERVAL=1
-COMMS_POLL_INTERVAL=0.2
-SECONDS=0
-wait_for_wake; RC=$?
+run_wake 1
 assert_eq "1" "$RC" "times out with no new messages (return 1)"
 
 # Test 10: no comms → timeout (return 1)
@@ -316,10 +315,7 @@ SAVE_URL="$COMMS_URL"
 SAVE_TOKEN="$COMMS_TOKEN"
 unset COMMS_URL
 unset COMMS_TOKEN
-INTERVAL=1
-COMMS_POLL_INTERVAL=0.2
-SECONDS=0
-wait_for_wake; RC=$?
+run_wake 1
 assert_eq "1" "$RC" "times out when comms not configured (return 1)"
 export COMMS_URL="$SAVE_URL"
 export COMMS_TOKEN="$SAVE_TOKEN"
@@ -405,22 +401,14 @@ set_mock_response "unread" '{"channels": []}'
     set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 1, "messages": [{"ts": "2026-01-01T00:00:00", "sender": "test", "message": "hello"}]}]}'
 ) &
 UPD=$!
-INTERVAL=4
-COMMS_POLL_INTERVAL=0.2
-WAKE_CHANNELS="*"
-SECONDS=0
-wait_for_wake; RC=$?
+run_wake 4 "*"
 wait "$UPD" 2>/dev/null || true
 assert_eq "0" "$RC" "wake_channels: wakes when server returns messages"
 
 # Test 16: wake_channels — still times out with no messages
 set_mock_response "poll" '{"total": 500, "unread": 0, "channels": 3}'
 set_mock_response "unread" '{"channels": []}'
-INTERVAL=1
-COMMS_POLL_INTERVAL=0.2
-WAKE_CHANNELS="*"
-SECONDS=0
-wait_for_wake; RC=$?
+run_wake 1 "*"
 assert_eq "1" "$RC" "wake_channels: times out with no new messages"
 
 # Test 17: no wake_channels — ignores non-mention messages
@@ -431,11 +419,7 @@ set_mock_response "unread" '{"channels": []}'
     set_mock_response "poll" '{"total": 601, "unread": 1, "channels": 3}'
 ) &
 UPD=$!
-INTERVAL=2
-COMMS_POLL_INTERVAL=0.2
-WAKE_CHANNELS=""
-SECONDS=0
-wait_for_wake; RC=$?
+run_wake 2 ""
 wait "$UPD" 2>/dev/null || true
 assert_eq "1" "$RC" "no wake_channels: ignores non-mention messages"
 
