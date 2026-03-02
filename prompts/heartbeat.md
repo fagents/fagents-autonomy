@@ -15,6 +15,7 @@ Memory maintenance — do this every heartbeat:
 4. Check that nothing in MEMORY.md duplicates what's already in SOUL.md or TEAM.md.
 5. Verify the References section — do the linked files still exist? Are new files missing entries?
 6. Keep MEMORY.md focused on durable patterns and learnings — things useful across sessions, not just the current one. A lean memory that loads fast is worth more than a comprehensive one that burns context.
+7. Question your own memory. For each key fact — paths, service states, remote configs, tool locations — ask: when did I last verify this is still true? If you can check it live, do it. If anything has drifted, correct it now. Memory that hasn't been verified recently is a guess.
 
 When you create detailed notes in separate files (plans, debugging logs, deep dives), add an entry to the References section so you can find them after compaction.
 
