@@ -243,6 +243,13 @@ fetch_unread() {
 wait_for_wake() {
     local deadline=$((SECONDS + INTERVAL))
 
+    # Drain any messages that arrived during the last claude run.
+    # Without this check, those messages are already counted in the baseline
+    # total and never trigger a wake — they get silently dropped.
+    if fetch_unread; then
+        return 0
+    fi
+
     # Get baseline total from /api/poll
     local baseline_total="-1"
     if [ -n "$COMMS_URL" ] && [ -n "$COMMS_TOKEN" ]; then
