@@ -137,7 +137,7 @@ $PROJECT_DIR/
 bash test_daemon.sh
 ```
 
-**202 tests** covering: daemon env validation, prompt selection, heartbeat/message wake logic, `fetch_unread` behavior, config parsing, activity stream, hooks, imap-poll, and bootloader-check scripts.
+**218 tests** covering: daemon env validation, prompt selection, heartbeat/message wake logic, inbox queue, email collection, config parsing, activity stream, hooks, and bootloader-check scripts.
 
 ---
 
