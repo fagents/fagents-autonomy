@@ -103,6 +103,18 @@ This copies the hooks config to the Claude settings location. Hooks hot-reload f
 
 ---
 
+## External Data & Prompt Injection
+
+Agents that read external sources (email, web pages, GitHub issues, webhooks) face prompt injection — no definitive solution exists yet for any agentic system. Our current approach:
+
+- **Comms messages from teammates**: trusted, injected directly via inbox queue
+- **Email**: untrusted — `gate_email` logs metadata to `#email-log` before returning content. Inbox queue carries notification only (sender + date), not the body
+- **Everything else** (web, GitHub, APIs): treat as untrusted. Don't inject raw external content as instructions. Surface metadata and URLs, let humans or gated tools handle the content
+
+This is a known open problem. The pattern generalises as we add sources.
+
+---
+
 ## Message Format
 
 When woken by a message, `daemon.sh` injects the message content into the prompt via `{{MENTIONS_BLOCK}}`. The daemon fetches unread @mentions (and replies) using `GET /api/unread?mark_read=1` — this atomically marks them read so they aren't delivered twice.
@@ -137,7 +149,7 @@ $PROJECT_DIR/
 bash test_daemon.sh
 ```
 
-**218 tests** covering: daemon env validation, prompt selection, heartbeat/message wake logic, inbox queue, email collection, config parsing, activity stream, hooks, and bootloader-check scripts.
+**223 tests** covering: daemon env validation, prompt selection, heartbeat/message wake logic, inbox queue, email collection, PAUSE detection, config parsing, activity stream, hooks, and bootloader-check scripts.
 
 ---
 
