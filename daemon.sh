@@ -121,6 +121,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="${PROJECT_DIR:-/home/$(whoami)/workspace/$(whoami)}"
 STATE_DIR="$PROJECT_DIR/.autonomy"
 mkdir -p "$STATE_DIR"
+QUEUE_DIR="$PROJECT_DIR/.queue"
+INBOX_DIR="$QUEUE_DIR/inbox"
+ARCHIVE_DIR="$QUEUE_DIR/archive"
+mkdir -p "$INBOX_DIR" "$ARCHIVE_DIR"
+
+# MCP config from .mcp.json (installed by install-team.sh, agent can't read it but daemon can)
+MCP_BASE=""
+MCP_KEY=""
+if [ -f "$PROJECT_DIR/.mcp.json" ]; then
+    MCP_BASE=$(jq -r '.mcpServers["fagents-mcp"].url // empty' "$PROJECT_DIR/.mcp.json" 2>/dev/null | sed 's|/mcp$||') || true
+    MCP_KEY=$(jq -r '.mcpServers["fagents-mcp"].headers["x-api-key"] // empty' "$PROJECT_DIR/.mcp.json" 2>/dev/null) || true
+fi
+
 PAUSE_FILE="$STATE_DIR/daemon.pause"
 PID_FILE="$STATE_DIR/daemon.pid"
 SESSION_FILE="$STATE_DIR/daemon.session"
@@ -160,11 +173,14 @@ read_prompt() {
         done
         content="${content//\{\{CHANNELS_BLOCK\}\}/$block}"
         content="${content//\{\{AGENT_NAME\}\}/$AGENT}"
-        # Inject pre-fetched mentions (from fetch_unread) or remove placeholder
-        if [ -n "$WAKE_MENTIONS" ]; then
-            local mentions_block="Messages that triggered this wake:"$'\n'"$WAKE_MENTIONS"
-            content="${content//\{\{MENTIONS_BLOCK\}\}/$mentions_block}"
+        # Inject inbox messages or remove placeholder
+        # Supports both {{INBOX_BLOCK}} (new) and {{MENTIONS_BLOCK}} (backward compat)
+        if [ -n "$INBOX_BLOCK" ]; then
+            local inbox_header="Messages in your inbox ($INBOX_COUNT messages):"$'\n'"$INBOX_BLOCK"
+            content="${content//\{\{INBOX_BLOCK\}\}/$inbox_header}"
+            content="${content//\{\{MENTIONS_BLOCK\}\}/$inbox_header}"
         else
+            content="${content//\{\{INBOX_BLOCK\}\}/}"
             content="${content//\{\{MENTIONS_BLOCK\}\}/}"
         fi
         echo "$content"
@@ -206,81 +222,134 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $1" >> "$DAEMON_LOG"
 }
 
-# Fetch @mentions/replies directed at this agent and mark them as read.
-# Sets WAKE_MENTIONS to formatted message text (empty if none).
-# Returns 0 if mentions found, 1 if none.
-WAKE_MENTIONS=""
-fetch_unread() {
-    WAKE_MENTIONS=""
+# ── Message Queue ──
+# Collect functions write .jsonl files to INBOX_DIR. Each message is one file.
+# read_inbox() formats them for prompt injection. archive_inbox() moves them after processing.
+
+# Collect unread comms messages into inbox/ as .jsonl files.
+# Returns 0 if messages written, 1 if none.
+collect_comms() {
     if [ -z "$COMMS_URL" ] || [ -z "$COMMS_TOKEN" ]; then
         return 1
     fi
-    # Always fetch mentions; also fetch all msgs from wake_channels
     local url="$COMMS_URL/api/unread?mark_read=1"
     [ -n "$WAKE_CHANNELS" ] && url="$url&wake_channels=$WAKE_CHANNELS"
     local resp
     resp=$(curl -s --max-time 5 -H "Authorization: Bearer $COMMS_TOKEN" \
         "$url" 2>/dev/null) || return 1
-    local mention_count
-    mention_count=$(echo "$resp" | jq '[.channels[]?.unread_count // 0] | add // 0' 2>/dev/null) || return 1
-    if [ "$mention_count" -gt 0 ] 2>/dev/null; then
-        # Format mentions for prompt injection
-        WAKE_MENTIONS=$(echo "$resp" | jq -r '
-            .channels[] | select(.unread_count > 0) |
-            "--- #\(.channel) (\(.unread_count) mentions) ---",
-            (.messages[] | "[\(.ts)] [\(.sender)] \(.message)"),
-            ""
-        ' 2>/dev/null) || true
-        return 0
-    fi
+    local count
+    count=$(echo "$resp" | jq '[.channels[]?.unread_count // 0] | add // 0' 2>/dev/null) || return 1
+    [ "$count" -gt 0 ] 2>/dev/null || return 1
+    # Write one .jsonl file per message
+    local wrote=0
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local msg_id
+        msg_id=$(echo "$line" | jq -r '.id' 2>/dev/null) || continue
+        [ -z "$msg_id" ] || [ "$msg_id" = "null" ] && continue
+        echo "$line" > "$INBOX_DIR/${msg_id}.jsonl"
+        wrote=1
+    done < <(echo "$resp" | jq -c '
+        .channels[] | select(.unread_count > 0) |
+        .channel as $ch |
+        .messages[] |
+        {
+            ts: .ts,
+            id: ("comms-" + $ch + "-" + (.ts | gsub("[^0-9]"; ""))),
+            source: "comms",
+            channel: $ch,
+            from: .sender,
+            body: .message,
+            trusted: true
+        }
+    ' 2>/dev/null)
+    [ "$wrote" = "1" ] && return 0 || return 1
+}
+
+# Collect new email notifications into inbox/.
+# Stub — implemented in Phase 2.
+collect_email() {
     return 1
 }
 
-# Wait for message or timeout.
-# Returns 0 if wake triggered (message), 1 if timeout (regular heartbeat).
-# Always wakes on @mentions/replies. WAKE_CHANNELS adds all-message wake
-# for specified channels (comma-separated, or * for all).
-wait_for_wake() {
+# Collect new Telegram messages into inbox/.
+# Stub — implemented in Phase 3.
+collect_telegram() {
+    return 1
+}
+
+# Read all inbox/ files, format as text block for prompt injection.
+# Sets INBOX_BLOCK (text) and INBOX_COUNT (int).
+INBOX_BLOCK=""
+INBOX_COUNT=0
+read_inbox() {
+    INBOX_BLOCK=""
+    INBOX_COUNT=0
+    local files
+    files=$(find "$INBOX_DIR" -name '*.jsonl' -type f 2>/dev/null) || return 1
+    [ -z "$files" ] && return 1
+    INBOX_COUNT=$(echo "$files" | wc -l | tr -d ' ')
+    [ "$INBOX_COUNT" -gt 0 ] 2>/dev/null || return 1
+    # Sort by timestamp, format by source, wrap untrusted in tags
+    INBOX_BLOCK=$(cat "$INBOX_DIR"/*.jsonl 2>/dev/null | jq -rs '
+        sort_by(.ts) |
+        group_by(.source) | map(
+            "--- " + .[0].source +
+            (if .[0].source == "comms" and .[0].channel then " #" + .[0].channel else "" end) +
+            " (" + (length | tostring) + " messages) ---\n" +
+            (map(
+                (if .trusted == false then "<untrusted>\n" else "" end) +
+                "[" + .ts + "] [" + .from + "] " + .body +
+                (if .trusted == false then "\n</untrusted>" else "" end)
+            ) | join("\n"))
+        ) | join("\n\n")
+    ' 2>/dev/null) || return 1
+    [ -n "$INBOX_BLOCK" ] && return 0 || return 1
+}
+
+# Move all inbox files to archive/ after processing.
+archive_inbox() {
+    local files
+    files=$(find "$INBOX_DIR" -name '*.jsonl' -type f 2>/dev/null) || return 0
+    [ -z "$files" ] && return 0
+    mv "$INBOX_DIR"/*.jsonl "$ARCHIVE_DIR/" 2>/dev/null || true
+}
+
+# Collect from all sources and wait for inbox to have messages or timeout.
+# Returns 0 if inbox has messages (message wake), 1 if timeout (idle heartbeat).
+# INTERVAL (seconds) is the idle heartbeat timer, read from comms server via fetch_config().
+LAST_EMAIL_CHECK=0
+LAST_TELEGRAM_CHECK=0
+EMAIL_CADENCE=60
+TELEGRAM_CADENCE=5
+
+collect_and_wait() {
     local deadline=$((SECONDS + INTERVAL))
 
-    # Drain any messages that arrived during the last claude run.
-    # Without this check, those messages are already counted in the baseline
-    # total and never trigger a wake — they get silently dropped.
-    if fetch_unread; then
+    # Drain: collect messages that arrived during the last claude run.
+    # With the queue, this is simple — collect and check if inbox has files.
+    collect_comms || true
+    if [ -n "$(find "$INBOX_DIR" -name '*.jsonl' -type f 2>/dev/null | head -1)" ]; then
         return 0
     fi
 
-    # Get baseline total from /api/poll
-    local baseline_total="-1"
-    if [ -n "$COMMS_URL" ] && [ -n "$COMMS_TOKEN" ]; then
-        baseline_total=$(curl -s --max-time 5 -H "Authorization: Bearer $COMMS_TOKEN" \
-            "$COMMS_URL/api/poll" 2>/dev/null \
-            | jq -r '.total // -1' 2>/dev/null) || baseline_total="-1"
-    fi
-
     while [ $SECONDS -lt $deadline ]; do
-        if [ -n "$COMMS_URL" ] && [ -n "$COMMS_TOKEN" ]; then
-            # Single HTTP call to check for new messages
-            local current_total
-            current_total=$(curl -s --max-time 5 -H "Authorization: Bearer $COMMS_TOKEN" \
-                "$COMMS_URL/api/poll" 2>/dev/null \
-                | jq -r '.total // -1' 2>/dev/null) || current_total="-1"
+        collect_comms || true
 
-            # If comms just recovered (baseline was -1), update baseline and check for unread
-            if [ "$current_total" != "-1" ] && [ "$baseline_total" = "-1" ]; then
-                baseline_total="$current_total"
-                if fetch_unread; then
-                    return 0
-                fi
-            # If total changed and we have valid counts, check for wake
-            elif [ "$current_total" != "$baseline_total" ] && \
-                 [ "$current_total" != "-1" ] && [ "$baseline_total" != "-1" ]; then
-                if fetch_unread; then
-                    return 0
-                fi
-                # New messages but not for us — update baseline, keep sleeping
-                baseline_total="$current_total"
-            fi
+        # External sources: cadence-gated (less frequent than comms)
+        local now=$SECONDS
+        if [ $((now - LAST_EMAIL_CHECK)) -ge $EMAIL_CADENCE ]; then
+            collect_email || true
+            LAST_EMAIL_CHECK=$now
+        fi
+        if [ $((now - LAST_TELEGRAM_CHECK)) -ge $TELEGRAM_CADENCE ]; then
+            collect_telegram || true
+            LAST_TELEGRAM_CHECK=$now
+        fi
+
+        # Check inbox — any files means wake
+        if [ -n "$(find "$INBOX_DIR" -name '*.jsonl' -type f 2>/dev/null | head -1)" ]; then
+            return 0
         fi
         sleep "$COMMS_POLL_INTERVAL"
     done
@@ -392,13 +461,16 @@ while true; do
     fetch_config || true
     refresh_channels || true
 
-    if wait_for_wake; then
+    if collect_and_wait; then
         PROMPT_FILE="$PROMPT_MSG"
-        # Extract wake channel from mentions for Stop hook
+        # Extract wake channel from first comms message for hooks
         export WAKE_CHANNEL
-        WAKE_CHANNEL=$(echo "$WAKE_MENTIONS" | sed -n 's/^--- #\([^ ]*\).*/\1/p' | head -1)
+        WAKE_CHANNEL=$(cat "$INBOX_DIR"/*.jsonl 2>/dev/null | jq -rs '
+            [.[] | select(.source == "comms")] | first // {} | .channel // "general"
+        ' 2>/dev/null) || WAKE_CHANNEL="general"
         [ -z "$WAKE_CHANNEL" ] && WAKE_CHANNEL="general"
-        log "[$AGENT] Woke on message (channel: $WAKE_CHANNEL)..."
+        read_inbox || true
+        log "[$AGENT] Woke on message (channel: $WAKE_CHANNEL, inbox: $INBOX_COUNT msgs)..."
     else
         PROMPT_FILE="$PROMPT_HEARTBEAT"
         export WAKE_CHANNEL="general"
@@ -407,6 +479,9 @@ while true; do
     check_pause
 
     run_claude "$PROMPT_FILE" "$SID"
+
+    # Archive processed inbox messages
+    archive_inbox
 
     # Extract result text for daemon log
     RESULT=$(echo "$CLAUDE_JSON" | jq -r '.result // ""' 2>/dev/null)

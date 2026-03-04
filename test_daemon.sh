@@ -1,8 +1,8 @@
 #!/bin/bash
 # Test suite for fagents-autonomy daemon.sh
 #
-# Tests the wake mechanism (fetch_unread, wait_for_wake) using
-# a mock HTTP server. No external dependencies beyond bash + python3.
+# Tests the message queue mechanism (collect_comms, collect_and_wait, read_inbox)
+# using a mock HTTP server. No external dependencies beyond bash + python3.
 #
 # Usage: ./test_daemon.sh
 
@@ -73,7 +73,7 @@ run_wake() {
     COMMS_POLL_INTERVAL=0.2
     [[ $# -ge 2 ]] && WAKE_CHANNELS="$2"
     SECONDS=0
-    wait_for_wake; RC=$?
+    collect_and_wait; RC=$?
 }
 
 # ── Mock HTTP server ──
@@ -200,12 +200,17 @@ with open(sys.argv[1]) as f:
     content = f.read()
 
 # Extract globals
-print('WAKE_MENTIONS=\"\"')
+print('INBOX_BLOCK=\"\"')
+print('INBOX_COUNT=0')
 print('WAKE_CHANNELS=\"\"')
 print('_ENV_WAKE_CHANNELS=\"\"')
+print('LAST_EMAIL_CHECK=0')
+print('LAST_TELEGRAM_CHECK=0')
+print('EMAIL_CADENCE=60')
+print('TELEGRAM_CADENCE=5')
 print()
 
-funcs = ['refresh_channels', 'fetch_config', 'fetch_unread', 'wait_for_wake', 'read_prompt', 'check_comms']
+funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms']
 for name in funcs:
     pattern = rf'^{name}\(\) \{{.*?^\}}'
     match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
@@ -234,89 +239,147 @@ eval "$(extract_functions)"
 DAEMON_LOG=$(mktemp)
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $1" >> "$DAEMON_LOG"; }
 
-# ── fetch_unread tests ──
+# Set up queue directories for tests
+TEST_QUEUE_DIR=$(mktemp -d)
+QUEUE_DIR="$TEST_QUEUE_DIR"
+INBOX_DIR="$TEST_QUEUE_DIR/inbox"
+ARCHIVE_DIR="$TEST_QUEUE_DIR/archive"
+mkdir -p "$INBOX_DIR" "$ARCHIVE_DIR"
 
-echo "fetch_unread():"
+# Helper to clear inbox between tests
+clear_inbox() {
+    rm -f "$INBOX_DIR"/*.jsonl 2>/dev/null || true
+    rm -f "$ARCHIVE_DIR"/*.jsonl 2>/dev/null || true
+}
 
-# Test 1: no mentions — returns 1, WAKE_MENTIONS empty
+# ── collect_comms tests ──
+
+echo "collect_comms():"
+
+# Test 1: no mentions — returns 1, inbox empty
+clear_inbox
 set_mock_response "unread" '{"channels": []}'
-fetch_unread; RC=$?
+collect_comms; RC=$?
 assert_eq "1" "$RC" "returns 1 when no mentions"
-assert_empty "$WAKE_MENTIONS" "WAKE_MENTIONS empty when no mentions"
+assert_eq "0" "$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')" "inbox empty when no mentions"
 
-# Test 2: has mentions — returns 0, WAKE_MENTIONS populated
+# Test 2: has mentions — returns 0, writes .jsonl files
+clear_inbox
 set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 2, "messages": [{"ts": "2026-02-17 16:00", "sender": "Juho", "message": "hey @TestAgent"}, {"ts": "2026-02-17 16:01", "sender": "FTW", "message": "ping"}]}]}'
-fetch_unread; RC=$?
+collect_comms; RC=$?
 assert_eq "0" "$RC" "returns 0 when mentions exist"
-assert_contains "$WAKE_MENTIONS" "#general" "WAKE_MENTIONS contains channel name"
-assert_contains "$WAKE_MENTIONS" "Juho" "WAKE_MENTIONS contains sender"
-assert_contains "$WAKE_MENTIONS" "hey @TestAgent" "WAKE_MENTIONS contains message text"
+FCOUNT=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "2" "$FCOUNT" "writes 2 .jsonl files to inbox"
+# Check file contents
+FIRST_MSG=$(cat "$INBOX_DIR"/*.jsonl 2>/dev/null | head -1)
+assert_contains "$FIRST_MSG" '"source":"comms"' "message has source comms"
+assert_contains "$FIRST_MSG" '"trusted":true' "comms messages are trusted"
 
 # Test 3: zero unread count
+clear_inbox
 set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 0, "messages": []}]}'
-fetch_unread; RC=$?
+collect_comms; RC=$?
 assert_eq "1" "$RC" "returns 1 when mention channels have 0 unread"
-assert_empty "$WAKE_MENTIONS" "WAKE_MENTIONS cleared on no mentions"
 
-# Test 4: multiple channels, some with mentions
-set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 0, "messages": []}, {"channel": "dm-test", "unread_count": 1, "messages": [{"ts": "2026-02-17 16:05", "sender": "FTL", "message": "check this"}]}]}'
-fetch_unread; RC=$?
-assert_eq "0" "$RC" "returns 0 when any channel has mentions"
-assert_contains "$WAKE_MENTIONS" "#dm-test" "WAKE_MENTIONS shows correct channel"
-assert_contains "$WAKE_MENTIONS" "FTL" "WAKE_MENTIONS shows correct sender"
-
-# Test 5: no COMMS_URL
+# Test 4: no COMMS_URL
+clear_inbox
 SAVE_URL="$COMMS_URL"
 unset COMMS_URL
-fetch_unread; RC=$?
+collect_comms; RC=$?
 assert_eq "1" "$RC" "returns 1 when COMMS_URL not set"
 export COMMS_URL="$SAVE_URL"
 
-# Test 6: no COMMS_TOKEN
+# Test 5: no COMMS_TOKEN
 SAVE_TOKEN="$COMMS_TOKEN"
 unset COMMS_TOKEN
-fetch_unread; RC=$?
+collect_comms; RC=$?
 assert_eq "1" "$RC" "returns 1 when COMMS_TOKEN not set"
 export COMMS_TOKEN="$SAVE_TOKEN"
 
+# Test 6: deduplication — same messages don't create extra files
+clear_inbox
+set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 1, "messages": [{"ts": "2026-02-17 16:00", "sender": "Juho", "message": "hello"}]}]}'
+collect_comms; RC=$?
+FCOUNT1=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+collect_comms; RC=$?
+FCOUNT2=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "$FCOUNT1" "$FCOUNT2" "same message ID overwrites, no duplicates"
+
 echo ""
 
-# ── wait_for_wake tests ──
+# ── read_inbox tests ──
 
-echo "wait_for_wake():"
+echo "read_inbox():"
 
-# Test 7: mention arrives → wakes (return 0), WAKE_MENTIONS populated
-set_mock_response "poll" '{"total": 100, "unread": 0, "channels": 3}'
+# Test: empty inbox
+clear_inbox
+read_inbox; RC=$?
+assert_eq "1" "$RC" "returns 1 when inbox is empty"
+assert_empty "$INBOX_BLOCK" "INBOX_BLOCK empty when no messages"
+assert_eq "0" "$INBOX_COUNT" "INBOX_COUNT is 0 when empty"
+
+# Test: formats comms messages
+clear_inbox
+echo '{"ts":"2026-02-17 16:00","id":"comms-general-1","source":"comms","channel":"general","from":"Juho","body":"hey there","trusted":true}' > "$INBOX_DIR/comms-general-1.jsonl"
+read_inbox; RC=$?
+assert_eq "0" "$RC" "returns 0 when inbox has messages"
+assert_eq "1" "$INBOX_COUNT" "INBOX_COUNT is 1"
+assert_contains "$INBOX_BLOCK" "comms" "INBOX_BLOCK contains source"
+assert_contains "$INBOX_BLOCK" "Juho" "INBOX_BLOCK contains sender"
+assert_contains "$INBOX_BLOCK" "hey there" "INBOX_BLOCK contains body"
+
+# Test: wraps untrusted messages
+clear_inbox
+echo '{"ts":"2026-02-17 16:00","id":"email-123","source":"email","from":"spammer@example.com","body":"You have new email (UID 123). Use gate_email to read.","trusted":false}' > "$INBOX_DIR/email-123.jsonl"
+read_inbox; RC=$?
+assert_eq "0" "$RC" "returns 0 for untrusted messages"
+assert_contains "$INBOX_BLOCK" "<untrusted>" "untrusted messages wrapped in <untrusted> tags"
+assert_contains "$INBOX_BLOCK" "</untrusted>" "untrusted messages have closing tag"
+
+echo ""
+
+# ── archive_inbox tests ──
+
+echo "archive_inbox():"
+
+# Test: moves files from inbox to archive
+clear_inbox
+echo '{"id":"test-1"}' > "$INBOX_DIR/test-1.jsonl"
+echo '{"id":"test-2"}' > "$INBOX_DIR/test-2.jsonl"
+archive_inbox
+INBOX_REMAINING=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+ARCHIVE_COUNT=$(find "$ARCHIVE_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "0" "$INBOX_REMAINING" "inbox empty after archive"
+assert_eq "2" "$ARCHIVE_COUNT" "archive has 2 files"
+
+# Test: no-op on empty inbox
+clear_inbox
+archive_inbox
+ARCHIVE_COUNT=$(find "$ARCHIVE_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "0" "$ARCHIVE_COUNT" "archive unchanged on empty inbox"
+
+echo ""
+
+# ── collect_and_wait tests ──
+
+echo "collect_and_wait():"
+
+# Test: mention arrives → wakes (return 0), inbox has files
+clear_inbox
 set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 1, "messages": [{"ts": "2026-02-17 16:10", "sender": "Juho", "message": "wake up"}]}]}'
-(
-    sleep 0.5
-    set_mock_response "poll" '{"total": 101, "unread": 1, "channels": 3}'
-) &
-UPD=$!
 run_wake 4
-wait "$UPD" 2>/dev/null || true
 assert_eq "0" "$RC" "wakes on mention (return 0)"
-assert_contains "$WAKE_MENTIONS" "wake up" "WAKE_MENTIONS populated after wake"
+FCOUNT=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+[ "$FCOUNT" -gt 0 ] && pass "inbox has files after wake" || fail "inbox should have files after wake"
 
-# Test 8: new messages but no mentions → timeout (return 1)
-set_mock_response "poll" '{"total": 200, "unread": 0, "channels": 3}'
-set_mock_response "unread" '{"channels": []}'
-(
-    sleep 0.3
-    set_mock_response "poll" '{"total": 201, "unread": 1, "channels": 3}'
-) &
-UPD=$!
-run_wake 2
-wait "$UPD" 2>/dev/null || true
-assert_eq "1" "$RC" "doesn't wake on non-mention messages (return 1)"
-
-# Test 9: no new messages → timeout (return 1)
-set_mock_response "poll" '{"total": 300, "unread": 0, "channels": 3}'
+# Test: no mentions → timeout (return 1)
+clear_inbox
 set_mock_response "unread" '{"channels": []}'
 run_wake 1
-assert_eq "1" "$RC" "times out with no new messages (return 1)"
+assert_eq "1" "$RC" "times out with no messages (return 1)"
 
-# Test 10: no comms → timeout (return 1)
+# Test: no comms → timeout (return 1)
+clear_inbox
 SAVE_URL="$COMMS_URL"
 SAVE_TOKEN="$COMMS_TOKEN"
 unset COMMS_URL
@@ -394,40 +457,21 @@ _ENV_WAKE_CHANNELS=""
 
 echo ""
 
-# ── wait_for_wake with WAKE_CHANNELS ──
+# ── collect_and_wait with WAKE_CHANNELS ──
 
-echo "wait_for_wake() with WAKE_CHANNELS:"
+echo "collect_and_wait() with WAKE_CHANNELS:"
 
-# Test 15: wake_channels — wakes when server returns messages
-set_mock_response "poll" '{"total": 400, "unread": 0, "channels": 3}'
-set_mock_response "unread" '{"channels": []}'
-(
-    sleep 0.5
-    set_mock_response "poll" '{"total": 401, "unread": 1, "channels": 3}'
-    set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 1, "messages": [{"ts": "2026-01-01T00:00:00", "sender": "test", "message": "hello"}]}]}'
-) &
-UPD=$!
+# Test: wake_channels — wakes when server returns messages
+clear_inbox
+set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 1, "messages": [{"ts": "2026-01-01T00:00:00", "sender": "test", "message": "hello"}]}]}'
 run_wake 4 "*"
-wait "$UPD" 2>/dev/null || true
 assert_eq "0" "$RC" "wake_channels: wakes when server returns messages"
 
-# Test 16: wake_channels — still times out with no messages
-set_mock_response "poll" '{"total": 500, "unread": 0, "channels": 3}'
+# Test: wake_channels — still times out with no messages
+clear_inbox
 set_mock_response "unread" '{"channels": []}'
 run_wake 1 "*"
 assert_eq "1" "$RC" "wake_channels: times out with no new messages"
-
-# Test 17: no wake_channels — ignores non-mention messages
-set_mock_response "poll" '{"total": 600, "unread": 0, "channels": 3}'
-set_mock_response "unread" '{"channels": []}'
-(
-    sleep 0.3
-    set_mock_response "poll" '{"total": 601, "unread": 1, "channels": 3}'
-) &
-UPD=$!
-run_wake 2 ""
-wait "$UPD" 2>/dev/null || true
-assert_eq "1" "$RC" "no wake_channels: ignores non-mention messages"
 
 # Reset
 WAKE_CHANNELS=""
@@ -442,8 +486,15 @@ echo "read_prompt():"
 TEST_PROMPTS_DIR=$(mktemp -d)
 PROMPTS_DIR="$TEST_PROMPTS_DIR"
 
-# Template with both placeholders
+# Template with both placeholders (new and backward compat)
 cat > "$TEST_PROMPTS_DIR/test.md" << 'TMPL'
+Check channels:
+{{CHANNELS_BLOCK}}
+{{INBOX_BLOCK}}
+Done.
+TMPL
+
+cat > "$TEST_PROMPTS_DIR/test-legacy.md" << 'TMPL'
 Check channels:
 {{CHANNELS_BLOCK}}
 {{MENTIONS_BLOCK}}
@@ -453,7 +504,8 @@ TMPL
 # Test: channels block uses 'fetch' not 'read'
 CH_ARRAY=("general" "dm-test")
 INTERVAL=300
-WAKE_MENTIONS=""
+INBOX_BLOCK=""
+INBOX_COUNT=0
 AUTONOMY_DIR=""
 OUTPUT=$(read_prompt "test.md")
 assert_contains "$OUTPUT" "fetch general" "channels block uses 'fetch' subcommand"
@@ -461,21 +513,34 @@ assert_contains "$OUTPUT" "fetch dm-test" "channels block includes all channels"
 assert_contains "$OUTPUT" "send general" "reply block includes send commands"
 assert_contains "$OUTPUT" "send dm-test" "reply block includes all channels for send"
 
-# Test: mentions block injected when WAKE_MENTIONS is set
-WAKE_MENTIONS="--- #general (1 mentions) ---
+# Test: inbox block injected when INBOX_BLOCK is set
+INBOX_BLOCK="--- comms #general (1 messages) ---
 [2026-02-17 16:00] [Juho] hey"
+INBOX_COUNT=1
 OUTPUT=$(read_prompt "test.md")
-assert_contains "$OUTPUT" "Messages that triggered this wake" "mentions header injected"
-assert_contains "$OUTPUT" "#general (1 mentions)" "mentions content injected"
+assert_contains "$OUTPUT" "Messages in your inbox" "inbox header injected"
+assert_contains "$OUTPUT" "Juho" "inbox content injected"
 
-# Test: mentions block removed when empty
-WAKE_MENTIONS=""
+# Test: inbox block removed when empty
+INBOX_BLOCK=""
+INBOX_COUNT=0
 OUTPUT=$(read_prompt "test.md")
-if echo "$OUTPUT" | grep -qF "Messages that triggered"; then
-    fail "mentions block should be removed when empty"
+if echo "$OUTPUT" | grep -qF "Messages in your inbox"; then
+    fail "inbox block should be removed when empty"
 else
-    pass "mentions block removed when WAKE_MENTIONS empty"
+    pass "inbox block removed when INBOX_BLOCK empty"
 fi
+
+# Test: backward compat — {{MENTIONS_BLOCK}} still works
+INBOX_BLOCK="--- comms (1 messages) ---
+[2026-02-17 16:00] [FTW] hello"
+INBOX_COUNT=1
+OUTPUT=$(read_prompt "test-legacy.md")
+assert_contains "$OUTPUT" "Messages in your inbox" "MENTIONS_BLOCK backward compat: header injected"
+assert_contains "$OUTPUT" "FTW" "MENTIONS_BLOCK backward compat: content injected"
+
+INBOX_BLOCK=""
+INBOX_COUNT=0
 
 # Test: --since uses interval-based calculation for non-msg prompts
 INTERVAL=300
@@ -508,7 +573,7 @@ Done.
 TMPL
 CH_ARRAY=("general")
 INTERVAL=300
-WAKE_MENTIONS=""
+INBOX_BLOCK=""
 AUTONOMY_DIR=""
 OUTPUT=$(read_prompt "test.md")
 assert_contains "$OUTPUT" "Local override" "local prompts/ overrides default prompts"

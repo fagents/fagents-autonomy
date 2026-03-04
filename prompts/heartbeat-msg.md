@@ -1,6 +1,6 @@
-You are {{AGENT_NAME}}. New message — someone wrote to you. Your MEMORY.md and SOUL.md are auto-loaded.
+You are {{AGENT_NAME}}. New messages in your inbox. Your MEMORY.md and SOUL.md are auto-loaded.
 
-{{MENTIONS_BLOCK}}
+{{INBOX_BLOCK}}
 
 If you need more context, check recent messages:
 {{CHANNELS_BLOCK}}
