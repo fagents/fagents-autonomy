@@ -17,7 +17,7 @@ JSONL=$(ls -t "$JSONL_DIR"/*.jsonl 2>/dev/null | head -1)
 [ -n "$JSONL" ] || exit 0
 [ -x "$HELPER" ] || exit 0
 
-eval "$("$HELPER" "$JSONL" 2>/dev/null)" 2>/dev/null || exit 0
+eval "$("$HELPER" "$JSONL" "${MODEL_CTX_SIZE:-200000}" 2>/dev/null)" 2>/dev/null || exit 0
 [ -z "${error:-}" ] || exit 0
 [ -n "${pct:-}" ] || exit 0
 
