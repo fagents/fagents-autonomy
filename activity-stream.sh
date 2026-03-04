@@ -164,7 +164,7 @@ for line in sys.stdin:
 
         if 'This is a heartbeat' in text:
             events.append({'ts': ts, 'type': 'heartbeat', 'summary': 'Heartbeat'})
-        elif 'New message' in text and 'someone wrote to you' in text:
+        elif 'New messages in your inbox' in text or ('New message' in text and 'someone wrote to you' in text):
             events.append({'ts': ts, 'type': 'wakeup', 'summary': 'Message wakeup'})
         elif 'continued from a previous conversation' in text:
             events.append({'ts': ts, 'type': 'compaction', 'summary': 'Context compacted'})
