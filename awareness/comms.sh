@@ -1,87 +1,44 @@
 #!/bin/bash
-# Awareness: Comms Check
-# Checks fagents-comms for PAUSE directives and new teammate messages.
-# Uses a 30-second cache to avoid hammering the server.
+# Awareness: PAUSE check
+# Scans inbox for PAUSE/GO directives from any team member.
+# No network calls — reads local .jsonl files only.
 # Usage: awareness/comms.sh
-# Output (stdout): alert string, or empty if nothing noteworthy.
-# Requires: AGENT env var (or defaults based on hostname)
+# Output (stdout): PAUSE alert with sender and message, or empty.
 
 AUTONOMY_DIR="${AUTONOMY_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-CLIENT="$AUTONOMY_DIR/comms/client.sh"
+PROJECT_DIR="${PROJECT_DIR:-/home/$(whoami)/workspace/$(whoami)}"
+INBOX_DIR="$PROJECT_DIR/.queue/inbox"
 
-[ -x "$CLIENT" ] || exit 0
+[ -d "$INBOX_DIR" ] || exit 0
 
-CACHE_DIR="/tmp/.comms-check-${AGENT:-default}"
-CACHE_FILE="$CACHE_DIR/last-ts"
-CACHE_RESULT="$CACHE_DIR/result"
-CACHE_INTERVAL=30
-mkdir -p "$CACHE_DIR" 2>/dev/null || true
-
-NOW=$(date +%s)
-DO_CHECK=1
-
-if [ -f "$CACHE_FILE" ]; then
-    LAST=$(cat "$CACHE_FILE" 2>/dev/null || echo 0)
-    LAST=${LAST:-0}
-    ELAPSED=$((NOW - LAST))
-    if [ "$ELAPSED" -lt "$CACHE_INTERVAL" ]; then
-        DO_CHECK=0
-        cat "$CACHE_RESULT" 2>/dev/null || true
-        exit 0
+# Scan inbox for PAUSE or GO (files sort by timestamp in filename)
+PAUSE_FROM=""
+PAUSE_BODY=""
+for f in "$INBOX_DIR"/*.jsonl; do
+    [ -f "$f" ] || continue
+    body=$(jq -r '.body // ""' "$f" 2>/dev/null) || continue
+    if echo "$body" | grep -qiE '^GO( |$)'; then
+        PAUSE_FROM=""
+        PAUSE_BODY=""
+    elif echo "$body" | grep -qiE '^PAUSE( |$)'; then
+        PAUSE_FROM=$(jq -r '.from // "someone"' "$f" 2>/dev/null)
+        PAUSE_BODY="$body"
     fi
-fi
-
-echo "$NOW" > "$CACHE_FILE"
-
-# Fetch recent messages from monitored channels
-CHANNELS="${CHANNELS:-general}"
-IFS=',' read -ra _CH_ARRAY <<< "$CHANNELS"
-MSGS=""
-for CHANNEL in "${_CH_ARRAY[@]}"; do
-    RESULT=$("$CLIENT" fetch "$CHANNEL" --since 2m 2>/dev/null) || true
-    [ -n "$RESULT" ] && MSGS="${MSGS}${RESULT}"$'\n'
 done
 
-COMMS_CTX=""
+if [ -n "$PAUSE_FROM" ]; then
+    cat <<EOF
+**PAUSE — MANDATORY STOP**
+From: $PAUSE_FROM
+Message: $PAUSE_BODY
 
-if [ -n "$MSGS" ]; then
-    # PAUSE/GO check — Juho only
-    JUHO_MSGS=$(echo "$MSGS" | grep '\[Juho\]' || true)
-    if [ -n "$JUHO_MSGS" ]; then
-        LATEST_JUHO=$(echo "$JUHO_MSGS" | tail -1)
-        if echo "$LATEST_JUHO" | grep -qE '\] GO( |$)'; then
-            : # GO cancels PAUSE
-        elif echo "$JUHO_MSGS" | grep -qE '\] PAUSE( |$)'; then
-            COMMS_CTX="PAUSE FROM JUHO — STOP NOW. Post state to comms. Wait for GO."
-        fi
-    fi
+YOU MUST STOP IMMEDIATELY. Do not continue your current task.
+1. Post your current state to comms right now
+2. Do NOT make any more tool calls after posting
+3. Wait for GO before resuming
 
-    # New teammate messages
-    if [ -z "$COMMS_CTX" ]; then
-        if [ -n "${AGENT:-}" ]; then
-            SELF="$AGENT"
-        else
-            SELF="unknown"
-        fi
-
-        TEAMMATE_MSGS=$(echo "$MSGS" | grep -v "\[$SELF\]" | grep '\[' || true)
-        if [ -n "$TEAMMATE_MSGS" ]; then
-            PREV_TS=$(cat "$CACHE_DIR/last-alert-ts" 2>/dev/null || echo 0)
-            PREV_TS=${PREV_TS:-0}
-            LATEST_TS=$(echo "$TEAMMATE_MSGS" | tail -1 | sed -n 's/^\[\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\} [0-9]\{2\}:[0-9]\{2\}\).*/\1/p')
-            if [ -n "$LATEST_TS" ]; then
-                TEAM_EPOCH=$(date -d "$LATEST_TS" +%s 2>/dev/null || echo 0)
-                if [ "$TEAM_EPOCH" -gt "$PREV_TS" ]; then
-                    echo "$TEAM_EPOCH" > "$CACHE_DIR/last-alert-ts"
-                    SENDER=$(echo "$TEAMMATE_MSGS" | tail -1 | sed -n 's/^\[[^]]*\] \[\([^]]*\)\].*/\1/p' || echo "teammate")
-                    COMMS_CTX="New message from $SENDER on comms. Check when convenient."
-                fi
-            fi
-        fi
-    fi
+This is not optional. Stop what you are doing.
+EOF
 fi
-
-echo "$COMMS_CTX" > "$CACHE_RESULT"
-[ -n "$COMMS_CTX" ] && echo "$COMMS_CTX"
 
 exit 0
