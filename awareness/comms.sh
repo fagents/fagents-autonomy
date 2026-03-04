@@ -73,7 +73,7 @@ if [ -n "$MSGS" ]; then
                 TEAM_EPOCH=$(date -d "$LATEST_TS" +%s 2>/dev/null || echo 0)
                 if [ "$TEAM_EPOCH" -gt "$PREV_TS" ]; then
                     echo "$TEAM_EPOCH" > "$CACHE_DIR/last-alert-ts"
-                    SENDER=$(echo "$TEAMMATE_MSGS" | tail -1 | sed -n 's/.*\[\([^]]*\)\].*/\1/p' || echo "teammate")
+                    SENDER=$(echo "$TEAMMATE_MSGS" | tail -1 | sed -n 's/^\[[^]]*\] \[\([^]]*\)\].*/\1/p' || echo "teammate")
                     COMMS_CTX="New message from $SENDER on comms. Check when convenient."
                 fi
             fi
