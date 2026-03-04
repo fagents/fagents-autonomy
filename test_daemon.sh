@@ -115,6 +115,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._serve('channels-list.json')
         elif path == '/api/whoami':
             self._serve('whoami.json')
+        elif path == '/api/check-email':
+            self._serve('check-email.json')
         elif path == '/health':
             self.send_response(200)
             self.end_headers()
@@ -239,12 +241,13 @@ eval "$(extract_functions)"
 DAEMON_LOG=$(mktemp)
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $1" >> "$DAEMON_LOG"; }
 
-# Set up queue directories for tests
+# Set up queue and state directories for tests
 TEST_QUEUE_DIR=$(mktemp -d)
 QUEUE_DIR="$TEST_QUEUE_DIR"
 INBOX_DIR="$TEST_QUEUE_DIR/inbox"
 ARCHIVE_DIR="$TEST_QUEUE_DIR/archive"
-mkdir -p "$INBOX_DIR" "$ARCHIVE_DIR"
+STATE_DIR="$TEST_QUEUE_DIR/state"
+mkdir -p "$INBOX_DIR" "$ARCHIVE_DIR" "$STATE_DIR"
 
 # Helper to clear inbox between tests
 clear_inbox() {
@@ -357,6 +360,56 @@ clear_inbox
 archive_inbox
 ARCHIVE_COUNT=$(find "$ARCHIVE_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
 assert_eq "0" "$ARCHIVE_COUNT" "archive unchanged on empty inbox"
+
+echo ""
+
+# ── collect_email tests ──
+
+echo "collect_email():"
+
+# Test: returns 1 when MCP not configured
+MCP_BASE_SAVE="$MCP_BASE"; MCP_KEY_SAVE="$MCP_KEY"
+MCP_BASE=""; MCP_KEY=""
+collect_email; RC=$?
+assert_eq "1" "$RC" "returns 1 when MCP not configured"
+MCP_BASE="$MCP_BASE_SAVE"; MCP_KEY="$MCP_KEY_SAVE"
+
+# Test: returns 1 when no new email
+MCP_BASE="http://127.0.0.1:$MOCK_PORT"
+MCP_KEY="test-key"
+set_mock_response "check-email" '{"messages": []}'
+clear_inbox
+collect_email; RC=$?
+assert_eq "1" "$RC" "returns 1 when no new email"
+
+# Test: writes notification .jsonl when new email
+set_mock_response "check-email" '{"messages": [{"uid": 42, "from": "alice@example.com", "date": "2026-03-04T10:00:00Z"}]}'
+clear_inbox
+rm -f "$STATE_DIR/email-last-uid"
+collect_email; RC=$?
+assert_eq "0" "$RC" "returns 0 when new email found"
+assert_eq "1" "$(find "$INBOX_DIR" -name 'email-*.jsonl' | wc -l | tr -d ' ')" "writes 1 email .jsonl to inbox"
+
+# Test: email entry is untrusted and notification-only
+ENTRY=$(cat "$INBOX_DIR"/email-42.jsonl)
+assert_contains "$ENTRY" '"source":"email"' "email entry has source email"
+assert_contains "$ENTRY" '"trusted":false' "email entry is untrusted"
+assert_contains "$ENTRY" 'gate_email' "email entry mentions gate_email"
+# No subject in the entry
+echo "$ENTRY" | grep -q '"subject"' && fail "email entry must not contain subject" || pass "email entry has no subject"
+
+# Test: updates last UID tracker
+LAST_UID=$(cat "$STATE_DIR/email-last-uid" 2>/dev/null | tr -d '[:space:]')
+assert_eq "42" "$LAST_UID" "last UID updated to 42"
+
+# Test: multiple emails, tracks highest UID
+set_mock_response "check-email" '{"messages": [{"uid": 50, "from": "bob@example.com", "date": "2026-03-04T11:00:00Z"}, {"uid": 55, "from": "carol@example.com", "date": "2026-03-04T12:00:00Z"}]}'
+clear_inbox
+collect_email; RC=$?
+assert_eq "0" "$RC" "returns 0 for multiple emails"
+assert_eq "2" "$(find "$INBOX_DIR" -name 'email-*.jsonl' | wc -l | tr -d ' ')" "writes 2 email .jsonl files"
+LAST_UID=$(cat "$STATE_DIR/email-last-uid" 2>/dev/null | tr -d '[:space:]')
+assert_eq "55" "$LAST_UID" "last UID updated to highest (55)"
 
 echo ""
 
@@ -1460,44 +1513,6 @@ assert d['has_resume'] in (True, False)
 print('ok')
 " 2>/dev/null)
 assert_eq "ok" "$BOOL_CHECK" "process.sh: boolean values are True/False not strings"
-
-echo ""
-
-# ── imap-poll.sh tests ──
-
-echo "imap-poll.sh:"
-
-IMAP_POLL="$SCRIPT_DIR/awareness/imap-poll.sh"
-IMAP_TMP=$(mktemp -d)
-IMAP_STATE_DIR="$IMAP_TMP/.autonomy"
-mkdir -p "$IMAP_STATE_DIR"
-
-# No state file — silent
-out=$(PROJECT_DIR="$IMAP_TMP" bash "$IMAP_POLL" 2>/dev/null)
-assert_empty "$out" "imap-poll: silent when no state file"
-
-# State file exists but empty — silent
-touch "$IMAP_STATE_DIR/imap-last-uid"
-out=$(PROJECT_DIR="$IMAP_TMP" bash "$IMAP_POLL" 2>/dev/null)
-assert_empty "$out" "imap-poll: silent when state file is empty"
-
-# State file has whitespace only — silent
-echo "   " > "$IMAP_STATE_DIR/imap-last-uid"
-out=$(PROJECT_DIR="$IMAP_TMP" bash "$IMAP_POLL" 2>/dev/null)
-assert_empty "$out" "imap-poll: silent when state file is whitespace only"
-
-# State file has valid UID — emits reminder
-echo "42" > "$IMAP_STATE_DIR/imap-last-uid"
-out=$(PROJECT_DIR="$IMAP_TMP" bash "$IMAP_POLL" 2>/dev/null)
-assert_contains "$out" "42" "imap-poll: reminder includes last UID"
-assert_contains "$out" "gate_email" "imap-poll: reminder mentions gate_email"
-
-# UID with surrounding whitespace — still works
-echo "  99  " > "$IMAP_STATE_DIR/imap-last-uid"
-out=$(PROJECT_DIR="$IMAP_TMP" bash "$IMAP_POLL" 2>/dev/null)
-assert_contains "$out" "99" "imap-poll: trims whitespace from UID"
-
-rm -rf "$IMAP_TMP"
 
 echo ""
 

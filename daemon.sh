@@ -267,9 +267,53 @@ collect_comms() {
 }
 
 # Collect new email notifications into inbox/.
-# Stub — implemented in Phase 2.
+# Calls MCP /api/check-email for UIDs > last known, writes notification-only .jsonl.
+# No subject or body — agent must use gate_email to read content.
 collect_email() {
-    return 1
+    [ -n "$MCP_BASE" ] && [ -n "$MCP_KEY" ] || return 1
+
+    local last_uid=0
+    local uid_file="$STATE_DIR/email-last-uid"
+    [ -f "$uid_file" ] && last_uid=$(cat "$uid_file" 2>/dev/null | tr -d '[:space:]')
+    [ -n "$last_uid" ] || last_uid=0
+
+    local resp
+    resp=$(curl -s --max-time 10 \
+        -H "x-api-key: $MCP_KEY" \
+        "$MCP_BASE/api/check-email?since_uid=$last_uid" 2>/dev/null) || return 1
+
+    local count
+    count=$(echo "$resp" | jq '.messages | length' 2>/dev/null) || return 1
+    [ "$count" -gt 0 ] 2>/dev/null || return 1
+
+    local max_uid=$last_uid
+    local wrote=0
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local uid from date
+        uid=$(echo "$line" | jq -r '.uid' 2>/dev/null) || continue
+        from=$(echo "$line" | jq -r '.from' 2>/dev/null) || continue
+        date=$(echo "$line" | jq -r '.date' 2>/dev/null) || continue
+        [ -z "$uid" ] || [ "$uid" = "null" ] && continue
+
+        # Write notification-only entry — no subject, no body
+        local entry
+        entry=$(jq -nc \
+            --arg ts "$date" \
+            --arg id "email-$uid" \
+            --arg from "$from" \
+            --arg body "You have new email (UID $uid). Use gate_email to read." \
+            '{ts:$ts, id:$id, source:"email", channel:"email", from:$from, body:$body, trusted:false}')
+        echo "$entry" > "$INBOX_DIR/email-${uid}.jsonl"
+        wrote=1
+
+        [ "$uid" -gt "$max_uid" ] 2>/dev/null && max_uid=$uid
+    done < <(echo "$resp" | jq -c '.messages[]' 2>/dev/null)
+
+    # Update last UID tracker
+    [ "$max_uid" -gt "$last_uid" ] 2>/dev/null && echo "$max_uid" > "$uid_file"
+
+    [ "$wrote" = "1" ] && return 0 || return 1
 }
 
 # Collect new Telegram messages into inbox/.
