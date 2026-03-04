@@ -1,2 +1,5 @@
 # No runtime state here anymore — all state lives in $PROJECT_DIR/.autonomy/
 .queue/
+# TEAM.md is generated at install time from templates/base/TEAM.md in the fagents repo.
+# Real team member names live only in the local copy, never pushed to GitHub.
+TEAM.md
