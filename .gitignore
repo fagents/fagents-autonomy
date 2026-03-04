@@ -1,1 +1,2 @@
 # No runtime state here anymore — all state lives in $PROJECT_DIR/.autonomy/
+.queue/
