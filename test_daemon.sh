@@ -210,6 +210,7 @@ print('LAST_EMAIL_CHECK=0')
 print('LAST_TELEGRAM_CHECK=0')
 print('EMAIL_CADENCE=60')
 print('TELEGRAM_CADENCE=5')
+print('TELEGRAM_CLI="/nonexistent/telegram.sh"')
 print()
 
 funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms']
@@ -410,6 +411,66 @@ assert_eq "0" "$RC" "returns 0 for multiple emails"
 assert_eq "2" "$(find "$INBOX_DIR" -name 'email-*.jsonl' | wc -l | tr -d ' ')" "writes 2 email .jsonl files"
 LAST_UID=$(cat "$STATE_DIR/email-last-uid" 2>/dev/null | tr -d '[:space:]')
 assert_eq "55" "$LAST_UID" "last UID updated to highest (55)"
+
+echo ""
+
+# ── collect_telegram tests ──
+
+echo "collect_telegram():"
+
+# Test: returns 1 when CLI not found
+TELEGRAM_CLI="/nonexistent/telegram.sh"
+clear_inbox
+collect_telegram; RC=$?
+assert_eq "1" "$RC" "returns 1 when CLI not found"
+
+# Create a fake CLI script for remaining tests
+FAKE_TG_CLI=$(mktemp)
+echo '#!/bin/bash' > "$FAKE_TG_CLI"
+echo 'exit 0' >> "$FAKE_TG_CLI"
+chmod +x "$FAKE_TG_CLI"
+TELEGRAM_CLI="$FAKE_TG_CLI"
+
+# Test: returns 1 when poll returns no messages
+# Mock sudo to simulate telegram.sh poll returning exit 1 (no messages)
+sudo() { return 1; }
+clear_inbox
+collect_telegram; RC=$?
+assert_eq "1" "$RC" "returns 1 when poll returns no messages"
+unset -f sudo
+
+# Test: writes .jsonl when poll returns messages
+# Mock sudo to return telegram.sh poll output
+sudo() {
+    echo '{"update_id":100,"chat_id":789,"from":"tester","text":"hello from telegram","date":1709600000}'
+}
+clear_inbox
+collect_telegram; RC=$?
+assert_eq "0" "$RC" "returns 0 when telegram message found"
+assert_eq "1" "$(find "$INBOX_DIR" -name 'telegram-*.jsonl' | wc -l | tr -d ' ')" "writes 1 telegram .jsonl to inbox"
+unset -f sudo
+
+# Test: telegram entry has correct fields
+ENTRY=$(cat "$INBOX_DIR"/telegram-789-100.jsonl 2>/dev/null)
+assert_contains "$ENTRY" '"source":"telegram"' "telegram entry has source telegram"
+assert_contains "$ENTRY" '"trusted":false' "telegram entry is untrusted"
+assert_contains "$ENTRY" '"channel":"telegram-789"' "telegram entry has channel telegram-789"
+assert_contains "$ENTRY" '"from":"tester"' "telegram entry has from field"
+assert_contains "$ENTRY" 'hello from telegram' "telegram entry has message body"
+
+# Test: multiple messages
+sudo() {
+    echo '{"update_id":200,"chat_id":789,"from":"alice","text":"msg one","date":1709600001}'
+    echo '{"update_id":201,"chat_id":789,"from":"bob","text":"msg two","date":1709600002}'
+}
+clear_inbox
+collect_telegram; RC=$?
+assert_eq "0" "$RC" "returns 0 for multiple telegram messages"
+assert_eq "2" "$(find "$INBOX_DIR" -name 'telegram-*.jsonl' | wc -l | tr -d ' ')" "writes 2 telegram .jsonl files"
+unset -f sudo
+
+# Clean up fake CLI
+rm -f "$FAKE_TG_CLI"
 
 echo ""
 

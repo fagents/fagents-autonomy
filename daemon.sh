@@ -317,9 +317,41 @@ collect_email() {
 }
 
 # Collect new Telegram messages into inbox/.
-# Stub — implemented in Phase 3.
+# Calls telegram.sh poll via sudo, writes one .jsonl per message.
+TELEGRAM_CLI="/home/fagents/workspace/fagents-cli/telegram.sh"
 collect_telegram() {
-    return 1
+    [ -x "$TELEGRAM_CLI" ] || return 1
+
+    local resp
+    resp=$(sudo -u fagents "$TELEGRAM_CLI" poll 2>/dev/null) || return 1
+    [ -n "$resp" ] || return 1
+
+    local wrote=0
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local update_id chat_id from_user text msg_date
+        update_id=$(echo "$line" | jq -r '.update_id') || continue
+        chat_id=$(echo "$line" | jq -r '.chat_id') || continue
+        from_user=$(echo "$line" | jq -r '.from // "unknown"')
+        text=$(echo "$line" | jq -r '.text // ""')
+        msg_date=$(echo "$line" | jq -r '.date // 0')
+
+        local ts
+        ts=$(jq -nr --arg e "$msg_date" '$e | tonumber | strftime("%Y-%m-%dT%H:%M:%SZ")' 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+        local entry
+        entry=$(jq -nc \
+            --arg ts "$ts" \
+            --arg id "telegram-${chat_id}-${update_id}" \
+            --arg channel "telegram-${chat_id}" \
+            --arg from "$from_user" \
+            --arg body "$text" \
+            '{ts:$ts, id:$id, source:"telegram", channel:$channel, from:$from, body:$body, trusted:false}')
+        echo "$entry" > "$INBOX_DIR/telegram-${chat_id}-${update_id}.jsonl"
+        wrote=1
+    done <<< "$resp"
+
+    [ "$wrote" = "1" ] && return 0 || return 1
 }
 
 # Read all inbox/ files, format as text block for prompt injection.
