@@ -346,7 +346,8 @@ collect_telegram() {
             --arg channel "telegram-${chat_id}" \
             --arg from "$from_user" \
             --arg body "$text" \
-            '{ts:$ts, id:$id, source:"telegram", channel:$channel, from:$from, body:$body, trusted:false}')
+            --arg chat_id "$chat_id" \
+            '{ts:$ts, id:$id, source:"telegram", channel:$channel, from:$from, body:$body, chat_id:$chat_id, trusted:false}')
         echo "$entry" > "$INBOX_DIR/telegram-${chat_id}-${update_id}.jsonl"
         wrote=1
     done <<< "$resp"
