@@ -469,6 +469,59 @@ assert_eq "0" "$RC" "returns 0 for multiple telegram messages"
 assert_eq "2" "$(find "$INBOX_DIR" -name 'telegram-*.jsonl' | wc -l | tr -d ' ')" "writes 2 telegram .jsonl files"
 unset -f sudo
 
+# Test: voice message calls stt-transcribe and stores transcription
+# Create a fake STT CLI
+FAKE_STT_CLI=$(mktemp)
+cat > "$FAKE_STT_CLI" <<'STTEOF'
+#!/bin/bash
+echo '{"text":"transcribed voice text","model":"whisper-1","file_id":"voice-abc"}'
+STTEOF
+chmod +x "$FAKE_STT_CLI"
+STT_CLI="$FAKE_STT_CLI"
+
+sudo() {
+    # Detect which CLI is being called
+    if [[ "$3" == *"stt-transcribe"* ]] || [[ "$3" == "$FAKE_STT_CLI" ]]; then
+        bash "$FAKE_STT_CLI" "$@"
+    else
+        echo '{"update_id":500,"chat_id":789,"from":"juho","text":null,"date":1709600010,"type":"voice","file_id":"voice-abc","duration":3}'
+    fi
+}
+clear_inbox
+collect_telegram; RC=$?
+assert_eq "0" "$RC" "returns 0 for voice message"
+ENTRY=$(cat "$INBOX_DIR"/telegram-789-500.jsonl 2>/dev/null)
+assert_contains "$ENTRY" 'transcribed voice text' "voice message body is transcription"
+assert_contains "$ENTRY" '"source":"telegram"' "voice entry has source telegram"
+unset -f sudo
+
+# Test: voice message without STT CLI falls back to placeholder
+STT_CLI="/nonexistent/stt-transcribe.sh"
+sudo() {
+    echo '{"update_id":501,"chat_id":789,"from":"juho","text":null,"date":1709600011,"type":"voice","file_id":"voice-def","duration":5}'
+}
+clear_inbox
+collect_telegram; RC=$?
+assert_eq "0" "$RC" "returns 0 for voice message without STT"
+ENTRY=$(cat "$INBOX_DIR"/telegram-789-501.jsonl 2>/dev/null)
+assert_contains "$ENTRY" 'voice message' "voice fallback has placeholder text"
+assert_contains "$ENTRY" 'voice-def' "voice fallback has file_id"
+unset -f sudo
+
+# Test: text messages still work with type field
+STT_CLI="$FAKE_STT_CLI"
+sudo() {
+    echo '{"update_id":502,"chat_id":789,"from":"tester","text":"normal text","date":1709600012,"type":"text"}'
+}
+clear_inbox
+collect_telegram; RC=$?
+assert_eq "0" "$RC" "returns 0 for text message with type field"
+ENTRY=$(cat "$INBOX_DIR"/telegram-789-502.jsonl 2>/dev/null)
+assert_contains "$ENTRY" 'normal text' "text message body preserved with type field"
+unset -f sudo
+
+rm -f "$FAKE_STT_CLI"
+
 # Clean up fake CLI
 rm -f "$FAKE_TG_CLI"
 
