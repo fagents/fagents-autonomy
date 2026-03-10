@@ -222,6 +222,20 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $1" >> "$DAEMON_LOG"
 }
 
+# Push a single event to the activity feed (visible in comms UI).
+# Usage: push_activity <type> <summary>
+push_activity() {
+    [ -z "$COMMS_URL" ] || [ -z "$COMMS_TOKEN" ] && return
+    local type="$1" summary="$2"
+    local ts
+    ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    curl -s --max-time 3 -X POST \
+        -H "Authorization: Bearer $COMMS_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"events\":[{\"ts\":\"$ts\",\"type\":\"$type\",\"summary\":\"$summary\"}]}" \
+        "$COMMS_URL/api/agents/$AGENT/activity" >/dev/null 2>&1 || true
+}
+
 # ── Message Queue ──
 # Collect functions write .jsonl files to INBOX_DIR. Each message is one file.
 # read_inbox() formats them for prompt injection. archive_inbox() moves them after processing.
@@ -460,12 +474,21 @@ run_claude() {
     local resume_sid="${2:-}"
     local resume_args=""
     [ -n "$resume_sid" ] && resume_args="--resume $resume_sid"
+    local _err_file
+    _err_file=$(mktemp /tmp/claude-err-XXXXXX)
     CLAUDE_JSON=$(cd "$PROJECT_DIR" && read_prompt "$prompt_file" | claude -p \
         $resume_args \
         --output-format json \
         --dangerously-skip-permissions \
         --max-turns "$MAX_TURNS" \
-        9>&- 2>/dev/null) || true
+        9>&- 2>"$_err_file") || true
+    local _stderr
+    _stderr=$(cat "$_err_file" 2>/dev/null)
+    rm -f "$_err_file"
+    if [ -n "$_stderr" ]; then
+        log "claude stderr: $_stderr"
+        push_activity "error" "$(echo "$_stderr" | head -1 | cut -c1-200)"
+    fi
 }
 
 # Fetch per-agent config from server before first session

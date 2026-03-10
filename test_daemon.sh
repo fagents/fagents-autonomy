@@ -156,6 +156,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(b'{"ok": true}')
+        elif path.startswith('/api/agents/') and path.endswith('/activity'):
+            with open(os.path.join(DATA_DIR, 'last-activity-post.json'), 'w') as f:
+                f.write(body)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"ok": true}')
         else:
             self.send_response(404)
             self.end_headers()
@@ -213,7 +220,7 @@ print('TELEGRAM_CADENCE=5')
 print('TELEGRAM_CLI="/nonexistent/telegram.sh"')
 print()
 
-funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms']
+funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms', 'push_activity']
 for name in funcs:
     pattern = rf'^{name}\(\) \{{.*?^\}}'
     match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
@@ -1670,6 +1677,106 @@ out=$(PROJECT_DIR="$BC_TMP" bash "$BOOTLOADER_CHECK" 2>/dev/null)
 assert_empty "$out" "bootloader-check: silent after flag set (no repeat nag)"
 
 rm -rf "$BC_TMP"
+
+echo ""
+
+# ── push_activity tests ──
+
+echo "push_activity:"
+
+# Test: POSTs correct JSON structure to activity endpoint
+rm -f "$MOCK_DIR/last-activity-post.json"
+push_activity "error" "something went wrong"
+sleep 0.3
+ACTIVITY_BODY=$(cat "$MOCK_DIR/last-activity-post.json" 2>/dev/null || echo "")
+assert_contains "$ACTIVITY_BODY" '"type":"error"' "push_activity: type field in POST body"
+assert_contains "$ACTIVITY_BODY" '"summary":"something went wrong"' "push_activity: summary field in POST body"
+assert_contains "$ACTIVITY_BODY" '"events":[' "push_activity: events array wrapper"
+assert_contains "$ACTIVITY_BODY" '"ts":"' "push_activity: timestamp present"
+
+# Test: different event types work
+rm -f "$MOCK_DIR/last-activity-post.json"
+push_activity "warning" "disk space low"
+sleep 0.3
+ACTIVITY_BODY=$(cat "$MOCK_DIR/last-activity-post.json" 2>/dev/null || echo "")
+assert_contains "$ACTIVITY_BODY" '"type":"warning"' "push_activity: supports different event types"
+assert_contains "$ACTIVITY_BODY" '"summary":"disk space low"' "push_activity: different summary text"
+
+# Test: no COMMS_URL — returns silently (no crash)
+SAVE_COMMS_URL="$COMMS_URL"
+COMMS_URL=""
+rm -f "$MOCK_DIR/last-activity-post.json"
+push_activity "error" "should not appear"
+sleep 0.3
+ACTIVITY_BODY=$(cat "$MOCK_DIR/last-activity-post.json" 2>/dev/null || echo "")
+assert_empty "$ACTIVITY_BODY" "push_activity: no COMMS_URL — no POST sent"
+COMMS_URL="$SAVE_COMMS_URL"
+
+# Test: no COMMS_TOKEN — returns silently (no crash)
+SAVE_COMMS_TOKEN="$COMMS_TOKEN"
+COMMS_TOKEN=""
+rm -f "$MOCK_DIR/last-activity-post.json"
+push_activity "error" "should not appear"
+sleep 0.3
+ACTIVITY_BODY=$(cat "$MOCK_DIR/last-activity-post.json" 2>/dev/null || echo "")
+assert_empty "$ACTIVITY_BODY" "push_activity: no COMMS_TOKEN — no POST sent"
+COMMS_TOKEN="$SAVE_COMMS_TOKEN"
+
+# ── run_claude stderr capture tests ──
+
+echo ""
+echo "run_claude stderr capture:"
+
+# Test: stderr is logged when claude writes to it
+# We can't call run_claude() directly (needs claude binary), but we can test
+# the stderr-to-activity pattern by simulating what run_claude does.
+RC_TMP=$(mktemp -d)
+RC_LOG=$(mktemp)
+DAEMON_LOG="$RC_LOG"
+
+# Simulate the stderr capture pattern from run_claude
+_err_file=$(mktemp /tmp/claude-err-XXXXXX)
+echo "Rate limit exceeded: too many requests" > "$_err_file"
+_stderr=$(cat "$_err_file" 2>/dev/null)
+rm -f "$_err_file"
+assert_contains "$_stderr" "Rate limit" "stderr-capture: temp file captures stderr content"
+
+# Test: push_activity called with first line of stderr, truncated
+rm -f "$MOCK_DIR/last-activity-post.json"
+if [ -n "$_stderr" ]; then
+    log "claude stderr: $_stderr"
+    push_activity "error" "$(echo "$_stderr" | head -1 | cut -c1-200)"
+fi
+sleep 0.3
+ACTIVITY_BODY=$(cat "$MOCK_DIR/last-activity-post.json" 2>/dev/null || echo "")
+assert_contains "$ACTIVITY_BODY" '"type":"error"' "stderr-capture: pushes error event to activity"
+assert_contains "$ACTIVITY_BODY" "Rate limit exceeded" "stderr-capture: stderr content in activity summary"
+
+# Test: multiline stderr — only first line pushed
+rm -f "$MOCK_DIR/last-activity-post.json"
+_multi_stderr=$'First line error\nSecond line detail\nThird line trace'
+push_activity "error" "$(echo "$_multi_stderr" | head -1 | cut -c1-200)"
+sleep 0.3
+ACTIVITY_BODY=$(cat "$MOCK_DIR/last-activity-post.json" 2>/dev/null || echo "")
+assert_contains "$ACTIVITY_BODY" "First line error" "stderr-capture: multiline — only first line in summary"
+
+# Test: empty stderr — no activity push
+rm -f "$MOCK_DIR/last-activity-post.json"
+_empty_stderr=""
+if [ -n "$_empty_stderr" ]; then
+    push_activity "error" "should not fire"
+fi
+sleep 0.3
+ACTIVITY_BODY=$(cat "$MOCK_DIR/last-activity-post.json" 2>/dev/null || echo "")
+assert_empty "$ACTIVITY_BODY" "stderr-capture: empty stderr — no activity push"
+
+# Test: stderr logged to daemon log
+DAEMON_LOG="$RC_LOG"
+log "claude stderr: test error message"
+LOG_CONTENT=$(cat "$RC_LOG")
+assert_contains "$LOG_CONTENT" "claude stderr: test error message" "stderr-capture: stderr written to daemon log"
+
+rm -rf "$RC_TMP" "$RC_LOG"
 
 echo ""
 
