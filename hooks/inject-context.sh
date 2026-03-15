@@ -26,6 +26,6 @@ fi
 
 # Awareness: git (incoming commits)
 GIT_CTX=$("$AUTONOMY_DIR/awareness/git.sh" 2>/dev/null) || true
-[ -n "$GIT_CTX" ] && echo "$GIT_CTX"
-
-exit 0
+if [ -n "$GIT_CTX" ]; then
+    echo "$GIT_CTX"
+fi
