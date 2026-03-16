@@ -527,6 +527,29 @@ ENTRY=$(cat "$INBOX_DIR"/telegram-789-502.jsonl 2>/dev/null)
 assert_contains "$ENTRY" 'normal text' "text message body preserved with type field"
 unset -f sudo
 
+# Test: reply_to context is included in body
+sudo() {
+    echo '{"update_id":503,"chat_id":789,"from":"tester","text":"@bot check this","date":1709600013,"type":"text","reply_to":{"from":"alice","text":"original message","date":1709600010}}'
+}
+clear_inbox
+collect_telegram; RC=$?
+assert_eq "0" "$RC" "returns 0 for reply message"
+ENTRY=$(cat "$INBOX_DIR"/telegram-789-503.jsonl 2>/dev/null)
+assert_contains "$ENTRY" 'replying to alice' "reply_to from included in body"
+assert_contains "$ENTRY" 'original message' "reply_to text included in body"
+assert_contains "$ENTRY" '@bot check this' "reply message text preserved"
+unset -f sudo
+
+# Test: non-reply message has no reply_to prefix
+sudo() {
+    echo '{"update_id":504,"chat_id":789,"from":"tester","text":"plain message","date":1709600014,"type":"text"}'
+}
+clear_inbox
+collect_telegram; RC=$?
+ENTRY=$(cat "$INBOX_DIR"/telegram-789-504.jsonl 2>/dev/null)
+echo "$ENTRY" | grep -q 'replying to' && fail "non-reply has no reply_to prefix" || pass "non-reply has no reply_to prefix"
+unset -f sudo
+
 rm -f "$FAKE_STT_CLI"
 
 # Clean up fake CLI

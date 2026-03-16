@@ -369,6 +369,14 @@ collect_telegram() {
             text=$(echo "$line" | jq -r '.text // ""')
         fi
 
+        # Include reply_to context if present
+        local reply_from reply_text
+        reply_from=$(echo "$line" | jq -r '.reply_to.from // empty' 2>/dev/null) || true
+        reply_text=$(echo "$line" | jq -r '.reply_to.text // empty' 2>/dev/null) || true
+        if [[ -n "$reply_from" && -n "$reply_text" ]]; then
+            text="[replying to ${reply_from}: ${reply_text}] ${text}"
+        fi
+
         local ts
         ts=$(jq -nr --arg e "$msg_date" '$e | tonumber | strftime("%Y-%m-%dT%H:%M:%SZ")' 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ')
 
