@@ -5,7 +5,7 @@
 #   Requires: COMMS_URL, COMMS_TOKEN env vars
 #
 # Runs as background process. Daemon starts/stops it automatically.
-# Pushes tool use, thoughts, heartbeats, wakeups, compactions as they happen.
+# Pushes tool use, thoughts, rembeats, msgbeats, compactions as they happen.
 
 set -euo pipefail
 
@@ -58,7 +58,7 @@ done
 
 echo "activity-stream: tailing $JSONL as $AGENT" >&2
 
-# Tail with small lookback to catch wakeup/heartbeat markers on restart.
+# Tail with small lookback to catch rembeat/msgbeat markers on restart.
 # -n 0 misses the user prompt entry if activity-stream restarts mid-beat.
 # -n 3 catches it. Duplicate events are harmless in an activity log.
 tail -n 3 -f "$JSONL" | python3 -u -c "
@@ -162,10 +162,10 @@ for line in sys.stdin:
                 elif isinstance(block, str):
                     text += block
 
-        if 'This is a heartbeat' in text:
-            events.append({'ts': ts, 'type': 'heartbeat', 'summary': 'Heartbeat'})
+        if 'step back and consolidate' in text:
+            events.append({'ts': ts, 'type': 'rembeat', 'summary': 'Entering REM cycle'})
         elif 'New messages in your inbox' in text or ('New message' in text and 'someone wrote to you' in text):
-            events.append({'ts': ts, 'type': 'wakeup', 'summary': 'Message wakeup'})
+            events.append({'ts': ts, 'type': 'msgbeat', 'summary': 'Message wakeup'})
         elif 'continued from a previous conversation' in text:
             events.append({'ts': ts, 'type': 'compaction', 'summary': 'Context compacted'})
 

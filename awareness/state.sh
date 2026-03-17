@@ -3,7 +3,7 @@
 # Collects agent state from awareness scripts, writes snapshot, reports health.
 #
 # Usage: awareness/state.sh [wake_reason]
-#   wake_reason: "heartbeat", "message", "startup" (default: heartbeat)
+#   wake_reason: "rembeat", "msgbeat", "startup" (default: rembeat)
 #
 # Outputs one summary line to stdout (for daemon log).
 # Writes full state to $PROJECT_DIR/.autonomy/.state.json.
@@ -16,7 +16,7 @@ PROJECT_DIR="${PROJECT_DIR:-$(cd "$AWARENESS_DIR/../.." && pwd)}"
 STATE_DIR="$PROJECT_DIR/.autonomy"
 mkdir -p "$STATE_DIR"
 STATE_FILE="$STATE_DIR/.state.json"
-WAKE_REASON="${1:-heartbeat}"
+WAKE_REASON="${1:-rembeat}"
 TS=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
 # ── Collect context ──

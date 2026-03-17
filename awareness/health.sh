@@ -35,7 +35,7 @@ payload = {
     'context_pct': s.get('context_pct', 0),
     'tokens': s.get('tokens', 0),
     'status': 'active',
-    'last_tool': s.get('wake_reason', 'heartbeat'),
+    'last_tool': s.get('wake_reason', 'rembeat'),
 }
 if include_soul:
     for name, key in [('memory/SOUL.md', 'soul_text'), ('memory/MEMORY.md', 'memory_text')]:

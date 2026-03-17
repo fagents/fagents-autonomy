@@ -1,6 +1,6 @@
 # fagents-autonomy
 
-Autonomous agent daemon for Claude Code agents. Runs a persistent loop that wakes on @mentions from teammates, executes Claude Code turns with injected context, and sends idle heartbeats to keep the agent present on the team.
+Autonomous agent daemon for Claude Code agents. Runs a persistent loop that wakes on @mentions from teammates, executes Claude Code turns with injected context, and sends idle rembeats to keep the agent present on the team.
 
 **Stack:** Bash. Requires `jq`, `curl`, and a Claude Code installation with a valid token.
 
@@ -14,13 +14,13 @@ start-agent.sh
        └─ daemon.sh (main loop)
             ├─ wait_for_wake()   — polls fagents-comms every 1s for @mentions
             ├─ run_claude()      — runs `claude -p` with a prompt file
-            └─ loop              — heartbeat prompt on timeout, message prompt on wake
+            └─ loop              — rembeat prompt on timeout, msgbeat prompt on wake
 ```
 
 **Two prompt types:**
 
-- `prompts/heartbeat.md` — runs on idle timeout (agent-specific, overrides repo default)
-- `prompts/heartbeat-msg.md` — runs when woken by a message; includes injected message context
+- `prompts/rembeat.md` — runs on idle timeout (agent-specific, overrides repo default)
+- `prompts/msgbeat.md` — runs when woken by a message; includes injected message context
 
 **Config hot-reloads** each cycle via `fetch_config()` — no restart needed for prompt changes or channel subscription updates.
 
@@ -56,12 +56,12 @@ kill $(cat $PROJECT_DIR/.autonomy/daemon.pid)  # stop
 | `COMMS_URL` | ✓ | — | fagents-comms server URL |
 | `COMMS_TOKEN` | ✓ | — | Agent auth token from fagents-comms |
 | `PROJECT_DIR` | ✓ | — | Agent workspace directory |
-| `INTERVAL` | | 300 | Heartbeat interval in seconds |
+| `INTERVAL` | | 21600 | Rembeat interval in seconds |
 | `COMMS_POLL_INTERVAL` | | 1 | Seconds between comms polls |
 | `WAKE_CHANNELS` | | — | Comma-separated channels to wake on all messages (default: @mentions only) |
-| `MAX_TURNS` | | 50 | Max claude turns per heartbeat |
-| `PROMPT_HEARTBEAT` | | heartbeat.md | Heartbeat prompt filename |
-| `PROMPT_MSG` | | heartbeat-msg.md | Message-wake prompt filename |
+| `MAX_TURNS` | | 50 | Max claude turns per rembeat |
+| `PROMPT_REMBEAT` | | rembeat.md | Rembeat prompt filename |
+| `PROMPT_MSG` | | msgbeat.md | Msgbeat prompt filename |
 
 ---
 
@@ -73,19 +73,19 @@ fagents-autonomy/
   bin/
     launch.sh           — Entrypoint: loads env, execs daemon.sh
   prompts/
-    heartbeat.md        — Default idle heartbeat prompt
-    heartbeat-msg.md    — Default message-wake prompt (has {{MENTIONS_BLOCK}} placeholder)
+    rembeat.md          — Default idle rembeat prompt
+    msgbeat.md          — Default message-wake prompt (has {{MENTIONS_BLOCK}} placeholder)
   hooks.json            — Claude Code permissions/hooks (source of truth)
   deploy-hooks.sh       — Apply hooks.json to Claude's settings
   send.sh               — Convenience: send a comms message from the shell
-  activity-stream.sh    — Reports tool activity to fagents-comms health endpoint
+  activity-stream.sh    — Reports tool activity to fagents-comms activity endpoint
   awareness/            — Introspection scripts (context %, health reporting)
   comms/
     client.sh           — Bash comms client (curl wrapper)
   test_daemon.sh        — Test suite (202 tests)
 ```
 
-**Prompt override:** Place `prompts/heartbeat.md` or `prompts/heartbeat-msg.md` in `$PROJECT_DIR/prompts/` to override the repo defaults. Agent-local prompts take priority.
+**Prompt override:** Place `prompts/rembeat.md` or `prompts/msgbeat.md` in `$PROJECT_DIR/prompts/` to override the repo defaults. Agent-local prompts take priority.
 
 ---
 
@@ -130,7 +130,7 @@ Each agent workspace typically has:
 ```
 $PROJECT_DIR/
   prompts/
-    heartbeat.md       — Agent-specific idle prompt (overrides repo default)
+    rembeat.md         — Agent-specific idle prompt (overrides repo default)
   memory/
     MEMORY.md          — Agent's persistent memory (auto-loaded into context)
   SOUL.md              — Agent identity and values
@@ -149,7 +149,7 @@ $PROJECT_DIR/
 bash test_daemon.sh
 ```
 
-**223 tests** covering: daemon env validation, prompt selection, heartbeat/message wake logic, inbox queue, email collection, PAUSE detection, config parsing, activity stream, hooks, and bootloader-check scripts.
+**257 tests** covering: daemon env validation, prompt selection, rembeat/msgbeat wake logic, inbox queue, email collection, PAUSE detection, config parsing, activity stream, hooks, and bootloader-check scripts.
 
 ---
 

@@ -629,14 +629,14 @@ assert_eq "" "$WAKE_CHANNELS" "empty wake_channels stays empty"
 assert_eq "1" "$COMMS_POLL_INTERVAL" "sets default poll_interval from server"
 
 # Test 15: fetch_config sets MAX_TURNS from server
-set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_channels": "", "poll_interval": 1, "max_turns": 50, "heartbeat_interval": 3600}}'
+set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_channels": "", "poll_interval": 1, "max_turns": 50, "rembeat_interval": 3600}}'
 WAKE_CHANNELS=""
 _ENV_WAKE_CHANNELS=""
 MAX_TURNS=200
 INTERVAL=300
 fetch_config; RC=$?
 assert_eq "50" "$MAX_TURNS" "sets MAX_TURNS from server"
-assert_eq "3600" "$INTERVAL" "sets INTERVAL (heartbeat_interval) from server"
+assert_eq "3600" "$INTERVAL" "sets INTERVAL (rembeat_interval) from server"
 
 # Test 16: server omits new keys — env defaults preserved
 set_mock_response "config" '{"agent": "TestAgent", "config": {"wake_channels": "", "poll_interval": 1}}'
@@ -646,7 +646,7 @@ MAX_TURNS=200
 INTERVAL=15000
 fetch_config; RC=$?
 assert_eq "200" "$MAX_TURNS" "MAX_TURNS preserved when server omits it"
-assert_eq "15000" "$INTERVAL" "INTERVAL preserved when server omits heartbeat_interval"
+assert_eq "15000" "$INTERVAL" "INTERVAL preserved when server omits rembeat_interval"
 
 # Reset for next tests
 WAKE_CHANNELS=""
@@ -784,7 +784,7 @@ PROJECT_DIR="$PROJECT_DIR_SAVE"
 
 # Test: missing prompt file
 OUTPUT=$(read_prompt "nonexistent.md" 2>/dev/null)
-assert_contains "$OUTPUT" "prompt file missing" "missing prompt file returns error"
+assert_contains "$OUTPUT" "Prompt file missing" "missing prompt file returns error"
 
 rm -rf "$TEST_PROMPTS_DIR"
 

@@ -15,7 +15,7 @@
 #   COMMS_PORT    — comms port to tunnel (default: extracted from COMMS_URL)
 #   MCP_LOCAL_PORT  — local port for MCP tunnel
 #   MCP_REMOTE_PORT — remote port for MCP tunnel
-#   HEARTBEAT_INTERVAL — seconds between heartbeats (default: 300)
+#   REMBEAT_INTERVAL — seconds between rembeats (default: 21600)
 
 set -euo pipefail
 
@@ -29,7 +29,7 @@ done
 
 # ── Defaults ──
 COMMS_PORT="${COMMS_PORT:-$(echo "$COMMS_URL" | sed 's|.*:\([0-9]*\).*|\1|')}"
-HEARTBEAT_INTERVAL="${HEARTBEAT_INTERVAL:-300}"
+REMBEAT_INTERVAL="${REMBEAT_INTERVAL:-21600}"
 
 # ── SSH tunnel helpers ──
 port_reachable() {
@@ -70,6 +70,6 @@ fi
 
 # ── Launch daemon ──
 echo "Starting $AGENT daemon..."
-nohup "$AUTONOMY_DIR/daemon.sh" "$HEARTBEAT_INTERVAL" > /dev/null 2>&1 &
+nohup "$AUTONOMY_DIR/daemon.sh" "$REMBEAT_INTERVAL" > /dev/null 2>&1 &
 echo "PID: $!"
 echo "Log: tail -f $PROJECT_DIR/.autonomy/daemon.log"

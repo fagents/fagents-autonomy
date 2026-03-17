@@ -10,7 +10,7 @@ This is reactive, team-paced work — someone is waiting on you. Coordinate: pro
 
 Do the work. Build, fix, respond, ship.
 
-**Introspection**: If your context is 70%+ and you haven't updated MEMORY.md recently, do it now — append what you've learned, built, and decided this session. Raw notes are fine, just get them on disk before compaction erases them. The idle heartbeat will organize and consolidate later.
+**Introspection**: If your context is 70%+ and you haven't updated MEMORY.md recently, do it now — append what you've learned, built, and decided this session. Raw notes are fine, just get them on disk before compaction erases them. The idle rembeat will organize and consolidate later.
 
 Before pushing to a shared repo: verify you have ACK for this specific work. If you proposed and built in the same session without ACK, stop — post the diff and wait.
 

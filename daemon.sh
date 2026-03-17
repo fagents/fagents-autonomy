@@ -10,14 +10,14 @@
 #
 # Optional env vars:
 #   CHANNELS=general       Comma-separated channels to follow (default: general)
-#   PROMPT_HEARTBEAT       Heartbeat prompt file (default: heartbeat.md)
-#   PROMPT_MSG             Message wake prompt file (default: heartbeat-msg.md)
+#   PROMPT_REMBEAT         Rembeat prompt file (default: rembeat.md)
+#   PROMPT_MSG             Msgbeat prompt file (default: msgbeat.md)
 #   COMMS_POLL_INTERVAL=1  Seconds between HTTP polls (default: 1)
 #   WAKE_CHANNELS=ch1,ch2  Wake on all msgs in these channels (default: mentions-only)
-#   MAX_TURNS=50           Max turns per heartbeat
+#   MAX_TURNS=50           Max turns per rembeat
 #
 # Prompt overrides: place files in $PROJECT_DIR/prompts/ to override defaults.
-# Local heartbeat.md takes priority over the one in this repo's prompts/ dir.
+# Local rembeat.md takes priority over the one in this repo's prompts/ dir.
 #
 # Requires: jq, curl
 #
@@ -53,8 +53,8 @@ fi
 
 # ── Configurable defaults (all overridable via env) ──
 CHANNELS="${CHANNELS:-general}"
-PROMPT_HEARTBEAT="${PROMPT_HEARTBEAT:-heartbeat.md}"
-PROMPT_MSG="${PROMPT_MSG:-heartbeat-msg.md}"
+PROMPT_REMBEAT="${PROMPT_REMBEAT:-rembeat.md}"
+PROMPT_MSG="${PROMPT_MSG:-msgbeat.md}"
 MAX_TURNS="${MAX_TURNS:-50}"
 
 # Parse initial channel list from env (used as fallback)
@@ -93,11 +93,11 @@ fetch_config() {
     local resp
     resp=$(curl -s --max-time 5 -H "Authorization: Bearer $COMMS_TOKEN" \
         "$COMMS_URL/api/agents/$AGENT/config" 2>/dev/null) || return 1
-    local server_wake_channels server_poll_interval server_max_turns server_heartbeat
+    local server_wake_channels server_poll_interval server_max_turns server_rembeat
     server_wake_channels=$(echo "$resp" | jq -r '.config.wake_channels // empty' 2>/dev/null) || true
     server_poll_interval=$(echo "$resp" | jq -r '.config.poll_interval // empty' 2>/dev/null) || true
     server_max_turns=$(echo "$resp" | jq -r '.config.max_turns // empty' 2>/dev/null) || true
-    server_heartbeat=$(echo "$resp" | jq -r '.config.heartbeat_interval // empty' 2>/dev/null) || true
+    server_rembeat=$(echo "$resp" | jq -r '.config.rembeat_interval // empty' 2>/dev/null) || true
     # WAKE_CHANNELS: env overrides server
     if [ -z "$_ENV_WAKE_CHANNELS" ] && [ -n "$server_wake_channels" ]; then
         WAKE_CHANNELS="$server_wake_channels"
@@ -110,9 +110,9 @@ fetch_config() {
     if [ -n "$server_max_turns" ]; then
         MAX_TURNS="$server_max_turns"
     fi
-    # Heartbeat interval: server overrides CLI arg
-    if [ -n "$server_heartbeat" ]; then
-        INTERVAL="$server_heartbeat"
+    # Rembeat interval: server overrides CLI arg
+    if [ -n "$server_rembeat" ]; then
+        INTERVAL="$server_rembeat"
     fi
     return 0
 }
@@ -139,7 +139,7 @@ PID_FILE="$STATE_DIR/daemon.pid"
 SESSION_FILE="$STATE_DIR/daemon.session"
 DAEMON_LOG="$STATE_DIR/daemon.log"
 PROMPTS_DIR="$SCRIPT_DIR/prompts"
-INTERVAL="${1:-300}"
+INTERVAL="${1:-21600}"
 
 # Prompts are read from files at each use — edit without restarting the daemon.
 # {{CHANNELS_BLOCK}} in the prompt is replaced with channel-specific instructions.
@@ -151,8 +151,8 @@ read_prompt() {
         local content
         content=$(cat "$file")
         # Build channel instruction block
-        # Message-triggered heartbeats get --since 10m (mentions already injected)
-        # Regular heartbeats derive --since from INTERVAL (with 20% padding, minimum 60m)
+        # Msgbeat: --since 10m (mentions already injected)
+        # Rembeat: derive --since from INTERVAL (with 20% padding, minimum 60m)
         local since
         if [[ "$1" == *msg* ]]; then
             since="10m"
@@ -186,7 +186,7 @@ read_prompt() {
         echo "$content"
     else
         echo "ERROR: prompt file not found: $file" >&2
-        echo "Heartbeat prompt file missing. Check $file"
+        echo "Prompt file missing. Check $file"
     fi
 }
 
@@ -434,8 +434,8 @@ archive_inbox() {
 }
 
 # Collect from all sources and wait for inbox to have messages or timeout.
-# Returns 0 if inbox has messages (message wake), 1 if timeout (idle heartbeat).
-# INTERVAL (seconds) is the idle heartbeat timer, read from comms server via fetch_config().
+# Returns 0 if inbox has messages (msgbeat), 1 if timeout (rembeat).
+# INTERVAL (seconds) is the rembeat timer, read from comms server via fetch_config().
 LAST_EMAIL_CHECK=0
 LAST_TELEGRAM_CHECK=0
 EMAIL_CADENCE=60
@@ -501,7 +501,7 @@ run_claude() {
 
 # Fetch per-agent config from server before first session
 if fetch_config; then
-    log "Config from server: wake_channels=${WAKE_CHANNELS:-<mentions-only>}, poll_interval=$COMMS_POLL_INTERVAL, max_turns=$MAX_TURNS, heartbeat=$INTERVAL"
+    log "Config from server: wake_channels=${WAKE_CHANNELS:-<mentions-only>}, poll_interval=$COMMS_POLL_INTERVAL, max_turns=$MAX_TURNS, rembeat=$INTERVAL"
 else
     log "Using defaults: wake_channels=${WAKE_CHANNELS:-<mentions-only>}, poll_interval=$COMMS_POLL_INTERVAL"
 fi
@@ -517,16 +517,16 @@ fi
 
 if [ -n "$OLD_SID" ]; then
     log "Resuming session: $OLD_SID"
-    run_claude "$PROMPT_HEARTBEAT" "$OLD_SID"
+    run_claude "$PROMPT_REMBEAT" "$OLD_SID"
     SID=$(echo "$CLAUDE_JSON" | jq -r '.session_id // empty' 2>/dev/null)
     if [ -z "$SID" ]; then
         log "Resume failed, creating new session..."
-        run_claude "$PROMPT_HEARTBEAT"
+        run_claude "$PROMPT_REMBEAT"
         SID=$(echo "$CLAUDE_JSON" | jq -r '.session_id')
     fi
 else
     log "Creating session..."
-    run_claude "$PROMPT_HEARTBEAT"
+    run_claude "$PROMPT_REMBEAT"
     SID=$(echo "$CLAUDE_JSON" | jq -r '.session_id')
 fi
 INIT_JSON="$CLAUDE_JSON"
@@ -599,9 +599,9 @@ while true; do
         read_inbox || true
         log "[$AGENT] Woke on message (channel: $WAKE_CHANNEL, inbox: $INBOX_COUNT msgs)..."
     else
-        PROMPT_FILE="$PROMPT_HEARTBEAT"
+        PROMPT_FILE="$PROMPT_REMBEAT"
         export WAKE_CHANNEL="general"
-        log "[$AGENT] Heartbeat..."
+        log "[$AGENT] Rembeat..."
     fi
     check_pause
 
@@ -621,11 +621,11 @@ while true; do
     ensure_activity_stream
 
     # Awareness: collect state, push health, log summary
-    WAKE_TYPE="heartbeat"
-    [ "$PROMPT_FILE" = "$PROMPT_MSG" ] && WAKE_TYPE="message"
+    WAKE_TYPE="rembeat"
+    [ "$PROMPT_FILE" = "$PROMPT_MSG" ] && WAKE_TYPE="msgbeat"
     if [ -x "$INTROSPECT" ]; then
         (cd "$PROJECT_DIR" && "$INTROSPECT" "$WAKE_TYPE") 2>/dev/null >> "$DAEMON_LOG" || true
     fi
 
-    log "Heartbeat complete."
+    log "Rembeat complete."
 done

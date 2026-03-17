@@ -7,7 +7,7 @@ If you just compacted: run git log --oneline -20 to see what you did before memo
 Check comms briefly — respond if someone is waiting, then come back to maintenance:
 {{CHANNELS_BLOCK}}
 
-Memory maintenance — do this every heartbeat:
+Memory maintenance — do this every rembeat:
 
 1. Review MEMORY.md with fresh eyes. Is it lean? Can you find what matters in under 30 seconds? If not, reorganize.
 2. Archive completed work and historical context to memory/archive-YYYY-MM.md. Don't delete memories — move them.
