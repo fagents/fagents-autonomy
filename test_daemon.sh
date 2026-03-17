@@ -1803,6 +1803,102 @@ rm -rf "$RC_TMP" "$RC_LOG"
 
 echo ""
 
+# ── cron.sh tests ──
+echo "cron.sh:"
+
+CRON="$SCRIPT_DIR/cron.sh"
+CRON_TMP=$(mktemp -d)
+export PROJECT_DIR="$CRON_TMP"
+mkdir -p "$CRON_TMP/.queue/inbox"
+
+# Save and clear crontab for isolated testing (trap restores on crash)
+CRON_BACKUP_FILE=$(mktemp)
+crontab -l 2>/dev/null > "$CRON_BACKUP_FILE" || true
+_restore_crontab() {
+    if [ -s "$CRON_BACKUP_FILE" ]; then
+        crontab "$CRON_BACKUP_FILE"
+    else
+        crontab -r 2>/dev/null || true
+    fi
+    rm -f "$CRON_BACKUP_FILE"
+}
+trap _restore_crontab EXIT
+echo "" | crontab - 2>/dev/null
+
+# Test: add creates crontab entry
+OUTPUT=$(bash "$CRON" add test-review "0 9 * * 1" "Weekly review" 2>&1)
+assert_contains "$OUTPUT" "Added: test-review" "add: reports success"
+
+CRONTAB=$(crontab -l 2>/dev/null)
+assert_contains "$CRONTAB" "fagents-cron:test-review" "add: crontab has tag"
+assert_contains "$CRONTAB" "0 9 * * 1" "add: crontab has schedule"
+assert_contains "$CRONTAB" "cron.sh fire" "add: crontab has fire command"
+
+# Test: list shows added cron
+OUTPUT=$(bash "$CRON" list 2>&1)
+assert_contains "$OUTPUT" "test-review" "list: shows handle"
+assert_contains "$OUTPUT" "0 9 * * 1" "list: shows schedule"
+assert_contains "$OUTPUT" "Weekly review" "list: shows message"
+
+# Test: duplicate handle rejected
+OUTPUT=$(bash "$CRON" add test-review "0 10 * * *" "Duplicate" 2>&1)
+assert_contains "$OUTPUT" "already exists" "add: rejects duplicate handle"
+
+# Test: fire writes .jsonl to inbox
+bash "$CRON" fire test-fire "Check comms now" 2>/dev/null
+JSONL_FILE=$(find "$CRON_TMP/.queue/inbox" -name 'cron-test-fire-*.jsonl' -type f | head -1)
+[ -n "$JSONL_FILE" ] && pass "fire: creates .jsonl file" || fail "fire: creates .jsonl file"
+
+if [ -n "$JSONL_FILE" ]; then
+    CONTENT=$(cat "$JSONL_FILE")
+    assert_contains "$CONTENT" '"source":"cron"' "fire: source is cron"
+    assert_contains "$CONTENT" '"from":"cron:test-fire"' "fire: from has handle"
+    assert_contains "$CONTENT" '"body":"Check comms now"' "fire: body has message"
+    assert_contains "$CONTENT" '"trusted":true' "fire: message is trusted"
+    assert_contains "$CONTENT" '"channel":"self"' "fire: channel is self"
+fi
+
+# Test: add second cron
+bash "$CRON" add test-daily "0 */6 * * *" "Daily check" >/dev/null 2>&1
+OUTPUT=$(bash "$CRON" list 2>&1)
+assert_contains "$OUTPUT" "test-review" "list: shows first cron after second add"
+assert_contains "$OUTPUT" "test-daily" "list: shows second cron"
+
+# Test: remove deletes only the target
+OUTPUT=$(bash "$CRON" remove test-review 2>&1)
+assert_contains "$OUTPUT" "Removed: test-review" "remove: reports success"
+CRONTAB=$(crontab -l 2>/dev/null)
+if echo "$CRONTAB" | grep -q "fagents-cron:test-review"; then
+    fail "remove: crontab still has removed entry"
+else
+    pass "remove: crontab entry gone"
+fi
+assert_contains "$CRONTAB" "fagents-cron:test-daily" "remove: other entry preserved"
+
+# Test: remove nonexistent fails
+OUTPUT=$(bash "$CRON" remove nonexistent 2>&1)
+assert_contains "$OUTPUT" "not found" "remove: rejects nonexistent handle"
+
+# Test: list empty after removing all
+bash "$CRON" remove test-daily >/dev/null 2>&1
+OUTPUT=$(bash "$CRON" list 2>&1)
+assert_contains "$OUTPUT" "No recurring tasks" "list: empty after removing all"
+
+# Test: bad handle rejected
+OUTPUT=$(bash "$CRON" add "BAD HANDLE" "0 9 * * *" "test" 2>&1)
+assert_contains "$OUTPUT" "kebab-case" "add: rejects bad handle"
+
+# Test: bad schedule rejected
+OUTPUT=$(bash "$CRON" add test-bad "9 * *" "test" 2>&1)
+assert_contains "$OUTPUT" "5 cron fields" "add: rejects bad schedule"
+
+# Restore crontab (trap handles this on crash, but clean up explicitly too)
+_restore_crontab
+trap - EXIT
+rm -rf "$CRON_TMP"
+
+echo ""
+
 # ── Summary ──
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
