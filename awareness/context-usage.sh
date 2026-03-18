@@ -26,6 +26,11 @@ tail -50 "$JSONL" | python3 -c "
 import json, sys
 
 ctx = int(sys.argv[1])
+# Known context window sizes. We can't auto-detect the window from the API —
+# the model ID is the same regardless of context tier. This table is used as
+# a heuristic: if used_tokens exceeds the configured ctx, bump to the next
+# known size. Revisit when the API exposes the actual window.
+KNOWN_CONTEXT_WINDOWS = [200_000, 1_000_000]
 last_usage = None
 
 for line in sys.stdin:
@@ -50,6 +55,15 @@ inp = last_usage.get('input_tokens', 0)
 cc = last_usage.get('cache_creation_input_tokens', 0)
 cr = last_usage.get('cache_read_input_tokens', 0)
 total = inp + cc + cr
+
+# Heuristic: if used tokens exceed configured ctx, the agent is on a larger
+# context window than configured. Bump to the next known size.
+if total > ctx:
+    for window in KNOWN_CONTEXT_WINDOWS:
+        if window > ctx:
+            ctx = window
+            break
+
 pct = (total * 100) // ctx if ctx > 0 else 0
 print(f'pct={pct}')
 print(f'remaining={100 - pct}')

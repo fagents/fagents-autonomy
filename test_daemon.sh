@@ -1025,6 +1025,23 @@ EOF
 OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/rounding.jsonl" 200000)
 assert_contains "$OUTPUT" "pct=16" "rounding: 33333/200000 = 16% (integer division)"
 
+# Test: heuristic bumps ctx when used_tokens exceeds configured size
+# Agent configured for 200k but using 300k tokens — must be on 1M window
+cat > "$CTX_TMP/heuristic.jsonl" << 'EOF'
+{"message":{"usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":200000}}}
+EOF
+OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/heuristic.jsonl" 200000)
+assert_contains "$OUTPUT" "ctx_size=1000000" "heuristic: bumps to 1M when tokens exceed 200k"
+assert_contains "$OUTPUT" "pct=30" "heuristic: 300k/1M = 30%"
+
+# Test: heuristic does NOT bump when within configured size
+cat > "$CTX_TMP/no-bump.jsonl" << 'EOF'
+{"message":{"usage":{"input_tokens":50000,"cache_creation_input_tokens":0,"cache_read_input_tokens":100000}}}
+EOF
+OUTPUT=$("$CTX_SCRIPT" "$CTX_TMP/no-bump.jsonl" 200000)
+assert_contains "$OUTPUT" "ctx_size=200000" "heuristic: no bump when within 200k"
+assert_contains "$OUTPUT" "pct=75" "heuristic: 150k/200k = 75%"
+
 rm -rf "$CTX_TMP"
 
 echo ""
