@@ -350,24 +350,32 @@ collect_telegram() {
         from_user=$(echo "$line" | jq -r '.from // "unknown"')
         msg_date=$(echo "$line" | jq -r '.date // 0')
 
-        # Handle voice messages: transcribe via stt-transcribe.sh
-        local msg_type
+        # Handle message types: voice gets transcribed, attachments get download instructions
+        local msg_type file_id
         msg_type=$(echo "$line" | jq -r '.type // "text"')
+        file_id=$(echo "$line" | jq -r '.file_id // ""')
         local text
-        if [[ "$msg_type" == "voice" ]]; then
-            local file_id
-            file_id=$(echo "$line" | jq -r '.file_id // ""')
-            if [[ -n "$file_id" ]] && [[ -x "$STT_CLI" ]]; then
-                local stt_resp
-                stt_resp=$(sudo -u fagents "$STT_CLI" "$file_id" 2>/dev/null) || true
-                text=$(echo "$stt_resp" | jq -r '.text // ""' 2>/dev/null)
-                [[ -n "$text" ]] || text="[voice message — transcription failed]"
-            else
-                text="[voice message — file_id: ${file_id}]"
-            fi
-        else
-            text=$(echo "$line" | jq -r '.text // ""')
-        fi
+        text=$(echo "$line" | jq -r '.text // ""')
+        case "$msg_type" in
+            voice)
+                if [[ -n "$file_id" ]] && [[ -x "$STT_CLI" ]]; then
+                    local stt_resp
+                    stt_resp=$(sudo -u fagents "$STT_CLI" "$file_id" 2>/dev/null) || true
+                    text=$(echo "$stt_resp" | jq -r '.text // ""' 2>/dev/null)
+                    [[ -n "$text" ]] || text="[voice message — transcription failed]"
+                else
+                    text="[voice message — file_id: ${file_id}]"
+                fi
+                ;;
+            photo|document|video|audio|sticker)
+                local filename
+                filename=$(echo "$line" | jq -r '.filename // empty' 2>/dev/null) || true
+                local label="${msg_type}"
+                [[ -n "$filename" ]] && label="${msg_type}: ${filename}"
+                local caption="${text:+ — $text}"
+                text="[${label}${caption}] download: sudo -u fagents $TELEGRAM_CLI download ${file_id}"
+                ;;
+        esac
 
         # Include reply_to context if present
         local reply_from reply_text
