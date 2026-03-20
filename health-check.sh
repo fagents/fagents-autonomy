@@ -19,10 +19,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_HOME="$(dirname "$SCRIPT_DIR")"
 COMMS_CHANNELS="$INFRA_HOME/workspace/fagents-comms/channels"
 
-# Find all fagent group users
-FAGENT_GID=$(getent group fagent | cut -d: -f3 2>/dev/null) || exit 0
-[[ -n "$FAGENT_GID" ]] || exit 0
-AGENT_USERS=$(getent passwd | awk -F: -v gid="$FAGENT_GID" '$4==gid {print $1}')
+# Find all fagent group users (Linux: getent, macOS: dscl)
+if command -v getent &>/dev/null; then
+    FAGENT_GID=$(getent group fagent | cut -d: -f3 2>/dev/null) || exit 0
+    [[ -n "$FAGENT_GID" ]] || exit 0
+    AGENT_USERS=$(getent passwd | awk -F: -v gid="$FAGENT_GID" '$4==gid {print $1}')
+else
+    FAGENT_GID=$(dscl . -read /Groups/fagent PrimaryGroupID 2>/dev/null | awk '{print $2}') || exit 0
+    [[ -n "$FAGENT_GID" ]] || exit 0
+    AGENT_USERS=$(dscl . -list /Users PrimaryGroupID 2>/dev/null | awk -v gid="$FAGENT_GID" '$2==gid {print $1}')
+fi
 [[ -n "$AGENT_USERS" ]] || exit 0
 
 for USER in $AGENT_USERS; do
@@ -45,7 +51,8 @@ for USER in $AGENT_USERS; do
     # Already alerted for this incident?
     [[ -f "$STATE/daemon.alerted" ]] && continue
 
-    # Unexpected death — alert on comms
+    # Unexpected death — alert on comms (direct file append, bypasses server API;
+    # avoids needing a token but drifts server message count cache by one per alert)
     if [[ -d "$COMMS_CHANNELS" ]]; then
         ts=$(date '+%Y-%m-%d %H:%M %Z')
         last_log=$(tail -1 "$STATE/daemon.log" 2>/dev/null || echo "no log")
