@@ -199,6 +199,7 @@ if ! flock -n 9; then
     exit 1
 fi
 echo $$ > "$PID_FILE"
+rm -f "$STATE_DIR/daemon.stopped" "$STATE_DIR/daemon.alerted"
 STREAM_PID=""
 cleanup() {
     rm -f "$PID_FILE"
