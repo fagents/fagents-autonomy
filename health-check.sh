@@ -17,7 +17,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_HOME="$(dirname "$SCRIPT_DIR")"
-COMMS_CHANNELS="$INFRA_HOME/workspace/fagents-comms/channels"
+COMMS_CHANNELS="$INFRA_HOME/.agents/comms/channels"
 
 # Find all fagent group users (Linux: getent, macOS: dscl)
 if command -v getent &>/dev/null; then
