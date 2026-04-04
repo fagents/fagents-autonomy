@@ -2012,19 +2012,23 @@ CRON_TMP=$(mktemp -d)
 export PROJECT_DIR="$CRON_TMP"
 mkdir -p "$CRON_TMP/.queue/inbox"
 
-# Save and clear crontab for isolated testing (trap restores on crash)
-CRON_BACKUP_FILE=$(mktemp)
-crontab -l 2>/dev/null > "$CRON_BACKUP_FILE" || true
-_restore_crontab() {
-    if [ -s "$CRON_BACKUP_FILE" ]; then
-        crontab "$CRON_BACKUP_FILE"
-    else
-        crontab -r 2>/dev/null || true
-    fi
-    rm -f "$CRON_BACKUP_FILE"
-}
-trap _restore_crontab EXIT
-echo "" | crontab - 2>/dev/null
+# Mock crontab to avoid macOS TCC permission dialog (and isolate from real crontab)
+MOCK_CRONTAB_FILE="$CRON_TMP/mock-crontab"
+MOCK_CRONTAB_BIN="$CRON_TMP/bin/crontab"
+mkdir -p "$CRON_TMP/bin"
+cat > "$MOCK_CRONTAB_BIN" <<'MOCKEOF'
+#!/bin/bash
+STORE="${MOCK_CRONTAB_FILE:-/tmp/mock-crontab}"
+case "${1:-}" in
+    -l) cat "$STORE" 2>/dev/null || { echo "crontab: no crontab for $(whoami)" >&2; exit 1; } ;;
+    -r) rm -f "$STORE" ;;
+    -)  tmp=$(mktemp "${STORE}.XXXXXX"); cat > "$tmp"; mv "$tmp" "$STORE" ;;
+    *)  if [ -f "$1" ]; then cp "$1" "$STORE"; else echo "usage: crontab [-l|-r|-|file]" >&2; exit 1; fi ;;
+esac
+MOCKEOF
+chmod +x "$MOCK_CRONTAB_BIN"
+export MOCK_CRONTAB_FILE
+export PATH="$CRON_TMP/bin:$PATH"
 
 # Test: add creates crontab entry
 OUTPUT=$(bash "$CRON" add test-review "0 9 * * 1" "Weekly review" 2>&1)
@@ -2093,9 +2097,6 @@ assert_contains "$OUTPUT" "kebab-case" "add: rejects bad handle"
 OUTPUT=$(bash "$CRON" add test-bad "9 * *" "test" 2>&1)
 assert_contains "$OUTPUT" "5 cron fields" "add: rejects bad schedule"
 
-# Restore crontab (trap handles this on crash, but clean up explicitly too)
-_restore_crontab
-trap - EXIT
 rm -rf "$CRON_TMP"
 
 echo ""
