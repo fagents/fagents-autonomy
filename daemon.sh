@@ -458,6 +458,9 @@ collect_whatsapp() {
         esac
         [[ "$text" == "null" ]] && text=""
 
+        # Skip empty text messages (delivery receipts, system events)
+        [[ "$msg_type" == "text" && -z "$text" ]] && continue
+
         # Include reply_to context if present
         local reply_from reply_text
         reply_from=$(echo "$line" | jq -r '.reply_to.from // empty' 2>/dev/null) || true

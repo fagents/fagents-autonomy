@@ -716,12 +716,32 @@ ENTRY=$(cat "$INBOX_DIR"/whatsapp-msg010.jsonl 2>/dev/null)
 echo "$ENTRY" | grep -q 'replying to' && fail "non-reply has no reply_to prefix" || pass "non-reply has no reply_to prefix"
 unset -f sudo
 
+# Test: empty text messages (delivery receipts, system events) are skipped
+sudo() {
+    echo '{"id":"msg011","jid":"358445150070@s.whatsapp.net","from":"Juho","text":null,"ts":"2026-04-03T10:00:10.000Z","type":"text"}'
+}
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "1" "$RC" "skips empty text message (delivery receipt)"
+assert_eq "0" "$(find "$INBOX_DIR" -name 'whatsapp-*.jsonl' | wc -l | tr -d ' ')" "no inbox file for empty text"
+unset -f sudo
+
+# Test: empty text skipped but non-text types with empty text still pass
+sudo() {
+    echo '{"id":"msg012","jid":"358445150070@s.whatsapp.net","from":"Juho","text":null,"ts":"2026-04-03T10:00:11.000Z","type":"image","mimetype":"image/jpeg"}'
+}
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "0" "$RC" "image with null text still passes"
+assert_eq "1" "$(find "$INBOX_DIR" -name 'whatsapp-*.jsonl' | wc -l | tr -d ' ')" "image written to inbox"
+unset -f sudo
+
 rm -f "$FAKE_STT_CLI" "$FAKE_WA_CLI"
 WHATSAPP_CLI="$SAVE_WHATSAPP_CLI"
 
 echo ""
 
-# ── collect_and_wait tests ──
+# ── collect_and_wait tests ─���
 
 echo "collect_and_wait():"
 
