@@ -319,25 +319,37 @@ collect_comms; RC=$?
 FCOUNT2=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
 assert_eq "$FCOUNT1" "$FCOUNT2" "same message ID overwrites, no duplicates"
 
-# Test 7: same-second messages from different senders — both preserved (msg_id)
+# Test 7: same-second, SAME sender — only msg_id prevents collision
+# This is the critical regression test: without msg_id, these would collide
 clear_inbox
-set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 2, "messages": [{"ts": "2026-02-17 16:00:05 EET", "sender": "Juho", "message": "first msg", "msg_id": 41}, {"ts": "2026-02-17 16:00:05 EET", "sender": "FTF", "message": "second msg", "msg_id": 42}]}]}'
+set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 2, "messages": [{"ts": "2026-02-17 16:00:05 EET", "sender": "Juho", "message": "first msg", "msg_id": 41}, {"ts": "2026-02-17 16:00:05 EET", "sender": "Juho", "message": "second msg", "msg_id": 42}]}]}'
 collect_comms; RC=$?
-assert_eq "0" "$RC" "returns 0 for same-second messages"
+assert_eq "0" "$RC" "returns 0 for same-second same-sender messages"
 FCOUNT=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
-assert_eq "2" "$FCOUNT" "same-second messages with different msg_id both preserved"
+assert_eq "2" "$FCOUNT" "same-second same-sender: msg_id prevents collision"
 
 # Verify both message bodies are present (not overwritten)
 ALL_BODIES=$(cat "$INBOX_DIR"/*.jsonl 2>/dev/null | jq -r '.body' | sort)
-echo "$ALL_BODIES" | grep -q "first msg" && pass "same-second: first message body present" || fail "same-second: first message body present"
-echo "$ALL_BODIES" | grep -q "second msg" && pass "same-second: second message body present" || fail "same-second: second message body present"
+echo "$ALL_BODIES" | grep -q "first msg" && pass "same-second same-sender: first body present" || fail "same-second same-sender: first body present"
+echo "$ALL_BODIES" | grep -q "second msg" && pass "same-second same-sender: second body present" || fail "same-second same-sender: second body present"
 
-# Test 8: same-second without msg_id — fallback to timestamp+sender (no collision if different senders)
+# Verify filenames use msg_id (comms-general-41 and comms-general-42), not timestamp
+test -f "$INBOX_DIR/comms-general-41.jsonl" && pass "inbox filename uses msg_id 41" || fail "inbox filename uses msg_id 41"
+test -f "$INBOX_DIR/comms-general-42.jsonl" && pass "inbox filename uses msg_id 42" || fail "inbox filename uses msg_id 42"
+
+# Test 8: same-second without msg_id — fallback to timestamp+sender (different senders still work)
 clear_inbox
 set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 2, "messages": [{"ts": "2026-02-17 16:00:05 EET", "sender": "Juho", "message": "msg A"}, {"ts": "2026-02-17 16:00:05 EET", "sender": "FTF", "message": "msg B"}]}]}'
 collect_comms; RC=$?
 FCOUNT=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
 assert_eq "2" "$FCOUNT" "same-second different-sender without msg_id both preserved"
+
+# Test 9: same-second, same sender, NO msg_id — this IS a collision (documents the limitation)
+clear_inbox
+set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 2, "messages": [{"ts": "2026-02-17 16:00:05 EET", "sender": "Juho", "message": "will be lost"}, {"ts": "2026-02-17 16:00:05 EET", "sender": "Juho", "message": "overwrites"}]}]}'
+collect_comms; RC=$?
+FCOUNT=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "1" "$FCOUNT" "same-second same-sender without msg_id collides (known limitation)"
 
 echo ""
 
