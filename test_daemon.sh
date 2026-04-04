@@ -741,7 +741,7 @@ WHATSAPP_CLI="$SAVE_WHATSAPP_CLI"
 
 echo ""
 
-# ── collect_and_wait tests ─���
+# ── collect_and_wait tests ──
 
 echo "collect_and_wait():"
 
