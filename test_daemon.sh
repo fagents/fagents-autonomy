@@ -319,6 +319,26 @@ collect_comms; RC=$?
 FCOUNT2=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
 assert_eq "$FCOUNT1" "$FCOUNT2" "same message ID overwrites, no duplicates"
 
+# Test 7: same-second messages from different senders — both preserved (msg_id)
+clear_inbox
+set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 2, "messages": [{"ts": "2026-02-17 16:00:05 EET", "sender": "Juho", "message": "first msg", "msg_id": 41}, {"ts": "2026-02-17 16:00:05 EET", "sender": "FTF", "message": "second msg", "msg_id": 42}]}]}'
+collect_comms; RC=$?
+assert_eq "0" "$RC" "returns 0 for same-second messages"
+FCOUNT=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "2" "$FCOUNT" "same-second messages with different msg_id both preserved"
+
+# Verify both message bodies are present (not overwritten)
+ALL_BODIES=$(cat "$INBOX_DIR"/*.jsonl 2>/dev/null | jq -r '.body' | sort)
+echo "$ALL_BODIES" | grep -q "first msg" && pass "same-second: first message body present" || fail "same-second: first message body present"
+echo "$ALL_BODIES" | grep -q "second msg" && pass "same-second: second message body present" || fail "same-second: second message body present"
+
+# Test 8: same-second without msg_id — fallback to timestamp+sender (no collision if different senders)
+clear_inbox
+set_mock_response "unread" '{"channels": [{"channel": "general", "unread_count": 2, "messages": [{"ts": "2026-02-17 16:00:05 EET", "sender": "Juho", "message": "msg A"}, {"ts": "2026-02-17 16:00:05 EET", "sender": "FTF", "message": "msg B"}]}]}'
+collect_comms; RC=$?
+FCOUNT=$(find "$INBOX_DIR" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "2" "$FCOUNT" "same-second different-sender without msg_id both preserved"
+
 echo ""
 
 # ── read_inbox tests ──
