@@ -272,7 +272,7 @@ collect_comms() {
         .messages[] |
         {
             ts: .ts,
-            id: ("comms-" + $ch + "-" + (.ts | gsub("[^0-9]"; ""))),
+            id: ("comms-" + $ch + "-" + (.ts | gsub("[^0-9]"; "")) + "-" + (.sender | gsub("[^a-zA-Z0-9]"; ""))),
             source: "comms",
             channel: $ch,
             from: .sender,
