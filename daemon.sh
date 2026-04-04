@@ -201,9 +201,11 @@ fi
 echo $$ > "$PID_FILE"
 rm -f "$STATE_DIR/daemon.stopped" "$STATE_DIR/daemon.alerted"
 STREAM_PID=""
+WHATSAPP_SERVE_PID=""
 cleanup() {
     rm -f "$PID_FILE"
     [ -n "$STREAM_PID" ] && kill "$STREAM_PID" 2>/dev/null || true
+    [ -n "$WHATSAPP_SERVE_PID" ] && kill "$WHATSAPP_SERVE_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -405,6 +407,84 @@ collect_telegram() {
     [ "$wrote" = "1" ] && return 0 || return 1
 }
 
+# Collect new WhatsApp messages into inbox/.
+# Calls whatsapp.mjs poll via sudo, drains spool files into .queue/inbox/.
+WHATSAPP_CLI="/home/fagents/workspace/fagents-cli/whatsapp.mjs"
+collect_whatsapp() {
+    command -v node &>/dev/null || return 1
+    [ -f "$WHATSAPP_CLI" ] || return 1
+
+    local resp
+    resp=$(sudo -u fagents "$WHATSAPP_CLI" poll 2>/dev/null) || return 1
+    [ -n "$resp" ] || return 1
+
+    local wrote=0
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local msg_id jid from_user text msg_ts msg_type
+        msg_id=$(echo "$line" | jq -r '.id') || continue
+        jid=$(echo "$line" | jq -r '.jid') || continue
+        from_user=$(echo "$line" | jq -r '.from // "unknown"')
+        text=$(echo "$line" | jq -r '.text // ""')
+        msg_ts=$(echo "$line" | jq -r '.ts // ""')
+        msg_type=$(echo "$line" | jq -r '.type // "text"')
+
+        # Handle message types
+        case "$msg_type" in
+            voice)
+                local audio_path
+                audio_path=$(echo "$line" | jq -r '.audio_path // empty' 2>/dev/null) || true
+                if [[ -n "$audio_path" ]] && [[ -f "$audio_path" ]] && [[ -x "$STT_CLI" ]]; then
+                    local stt_resp
+                    stt_resp=$(sudo -u fagents "$STT_CLI" --audio-file "$audio_path" 2>/dev/null) || true
+                    text=$(echo "$stt_resp" | jq -r '.text // ""' 2>/dev/null)
+                    [[ -n "$text" ]] || text="[voice message — transcription failed]"
+                    rm -f "$audio_path"
+                elif [[ -n "$audio_path" ]] && [[ -f "$audio_path" ]]; then
+                    text="[voice message — STT not available, audio: ${audio_path}]"
+                else
+                    [[ -z "$text" || "$text" == "null" ]] && text="[voice message — audio download failed]"
+                fi
+                ;;
+            image|document|video)
+                local filename
+                filename=$(echo "$line" | jq -r '.filename // empty' 2>/dev/null) || true
+                local label="${msg_type}"
+                [[ -n "$filename" ]] && label="${msg_type}: ${filename}"
+                local caption=""
+                [[ -n "$text" && "$text" != "null" ]] && caption=" — $text"
+                text="[${label}${caption}]"
+                ;;
+        esac
+        [[ "$text" == "null" ]] && text=""
+
+        # Include reply_to context if present
+        local reply_from reply_text
+        reply_from=$(echo "$line" | jq -r '.reply_to.from // empty' 2>/dev/null) || true
+        reply_text=$(echo "$line" | jq -r '.reply_to.text // empty' 2>/dev/null) || true
+        if [[ -n "$reply_from" && -n "$reply_text" ]]; then
+            text="[replying to ${reply_from}: ${reply_text}] ${text}"
+        fi
+
+        local ts
+        [[ -n "$msg_ts" && "$msg_ts" != "null" ]] && ts="$msg_ts" || ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+        local entry
+        entry=$(jq -nc \
+            --arg ts "$ts" \
+            --arg id "whatsapp-${msg_id}" \
+            --arg channel "whatsapp-${jid}" \
+            --arg from "$from_user" \
+            --arg body "$text" \
+            --arg jid "$jid" \
+            '{ts:$ts, id:$id, source:"whatsapp", channel:$channel, from:$from, body:$body, jid:$jid, trusted:false}')
+        echo "$entry" > "$INBOX_DIR/whatsapp-${msg_id}.jsonl"
+        wrote=1
+    done <<< "$resp"
+
+    [ "$wrote" = "1" ] && return 0 || return 1
+}
+
 # Read all inbox/ files, format as text block for prompt injection.
 # Sets INBOX_BLOCK (text) and INBOX_COUNT (int).
 INBOX_BLOCK=""
@@ -447,8 +527,10 @@ archive_inbox() {
 # INTERVAL (seconds) is the rembeat timer, read from comms server via fetch_config().
 LAST_EMAIL_CHECK=0
 LAST_TELEGRAM_CHECK=0
+LAST_WHATSAPP_CHECK=0
 EMAIL_CADENCE=60
 TELEGRAM_CADENCE=5
+WHATSAPP_CADENCE=3
 
 collect_and_wait() {
     local deadline=$((SECONDS + INTERVAL))
@@ -472,6 +554,10 @@ collect_and_wait() {
         if [ $((now - LAST_TELEGRAM_CHECK)) -ge $TELEGRAM_CADENCE ]; then
             collect_telegram || true
             LAST_TELEGRAM_CHECK=$now
+        fi
+        if [ $((now - LAST_WHATSAPP_CHECK)) -ge $WHATSAPP_CADENCE ]; then
+            collect_whatsapp || true
+            LAST_WHATSAPP_CHECK=$now
         fi
 
         # Check inbox — any files means wake
@@ -581,6 +667,18 @@ ensure_activity_stream() {
 }
 ensure_activity_stream
 
+# Start WhatsApp serve if CLI exists (serve exits gracefully if no session)
+ensure_whatsapp_serve() {
+    command -v node &>/dev/null || return 1
+    [ -f "$WHATSAPP_CLI" ] || return 1
+    if [ -z "$WHATSAPP_SERVE_PID" ] || ! kill -0 "$WHATSAPP_SERVE_PID" 2>/dev/null; then
+        sudo -u fagents "$WHATSAPP_CLI" serve 9>&- </dev/null >> "$DAEMON_LOG" 2>&1 &
+        WHATSAPP_SERVE_PID=$!
+        log "WhatsApp serve started (PID: $WHATSAPP_SERVE_PID)"
+    fi
+}
+ensure_whatsapp_serve || true
+
 # Startup comms check
 check_comms || true
 
@@ -626,8 +724,9 @@ while true; do
     # Check comms connectivity each cycle
     check_comms || true
 
-    # Restart activity stream if it died
+    # Restart background processes if they died
     ensure_activity_stream
+    ensure_whatsapp_serve || true
 
     # Awareness: collect state, push health, log summary
     WAKE_TYPE="rembeat"

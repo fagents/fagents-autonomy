@@ -218,9 +218,12 @@ print('LAST_TELEGRAM_CHECK=0')
 print('EMAIL_CADENCE=60')
 print('TELEGRAM_CADENCE=5')
 print('TELEGRAM_CLI="/nonexistent/telegram.sh"')
+print('LAST_WHATSAPP_CHECK=0')
+print('WHATSAPP_CADENCE=3')
+print('WHATSAPP_CLI="/nonexistent/whatsapp.mjs"')
 print()
 
-funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms', 'push_activity']
+funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'collect_whatsapp', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms', 'push_activity']
 for name in funcs:
     pattern = rf'^{name}\(\) \{{.*?^\}}'
     match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
@@ -554,6 +557,167 @@ rm -f "$FAKE_STT_CLI"
 
 # Clean up fake CLI
 rm -f "$FAKE_TG_CLI"
+
+echo ""
+
+# ── collect_whatsapp tests ──
+
+echo "collect_whatsapp():"
+
+# Test: returns 1 when node not found
+SAVE_WHATSAPP_CLI="$WHATSAPP_CLI"
+WHATSAPP_CLI="/nonexistent/whatsapp.mjs"
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "1" "$RC" "returns 1 when CLI not found"
+
+# Create a fake CLI script for remaining tests
+FAKE_WA_CLI=$(mktemp)
+echo '#!/bin/bash' > "$FAKE_WA_CLI"
+echo 'exit 0' >> "$FAKE_WA_CLI"
+chmod +x "$FAKE_WA_CLI"
+WHATSAPP_CLI="$FAKE_WA_CLI"
+
+# Test: returns 1 when poll returns no messages
+sudo() { return 1; }
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "1" "$RC" "returns 1 when poll returns no messages"
+unset -f sudo
+
+# Test: writes .jsonl when poll returns messages
+sudo() {
+    echo '{"id":"msg001","jid":"358445150070@s.whatsapp.net","from":"Juho","text":"hello from whatsapp","ts":"2026-04-03T10:00:00.000Z","type":"text"}'
+}
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "0" "$RC" "returns 0 when whatsapp message found"
+assert_eq "1" "$(find "$INBOX_DIR" -name 'whatsapp-*.jsonl' | wc -l | tr -d ' ')" "writes 1 whatsapp .jsonl to inbox"
+unset -f sudo
+
+# Test: whatsapp entry has correct fields
+ENTRY=$(cat "$INBOX_DIR"/whatsapp-msg001.jsonl 2>/dev/null)
+assert_contains "$ENTRY" '"source":"whatsapp"' "whatsapp entry has source whatsapp"
+assert_contains "$ENTRY" '"trusted":false' "whatsapp entry is untrusted"
+assert_contains "$ENTRY" '"channel":"whatsapp-358445150070@s.whatsapp.net"' "whatsapp entry has channel"
+assert_contains "$ENTRY" '"from":"Juho"' "whatsapp entry has from field"
+assert_contains "$ENTRY" 'hello from whatsapp' "whatsapp entry has message body"
+assert_contains "$ENTRY" '"jid":"358445150070@s.whatsapp.net"' "whatsapp entry has jid field"
+
+# Test: multiple messages
+sudo() {
+    echo '{"id":"msg002","jid":"358445150070@s.whatsapp.net","from":"Juho","text":"first","ts":"2026-04-03T10:00:01.000Z","type":"text"}'
+    echo '{"id":"msg003","jid":"358445150070@s.whatsapp.net","from":"Juho","text":"second","ts":"2026-04-03T10:00:02.000Z","type":"text"}'
+}
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "0" "$RC" "returns 0 for multiple whatsapp messages"
+assert_eq "2" "$(find "$INBOX_DIR" -name 'whatsapp-*.jsonl' | wc -l | tr -d ' ')" "writes 2 whatsapp .jsonl files"
+unset -f sudo
+
+# Test: voice message with audio_path calls STT and stores transcription
+FAKE_STT_CLI=$(mktemp)
+cat > "$FAKE_STT_CLI" <<'STTEOF'
+#!/bin/bash
+echo '{"text":"transcribed whatsapp voice","model":"whisper-1"}'
+STTEOF
+chmod +x "$FAKE_STT_CLI"
+STT_CLI="$FAKE_STT_CLI"
+
+# Create a fake audio file for the voice test
+FAKE_AUDIO=$(mktemp /tmp/whatsapp-voice-XXXXXX.oga)
+echo "fake audio" > "$FAKE_AUDIO"
+
+sudo() {
+    if [[ "$3" == *"stt-transcribe"* ]] || [[ "$3" == "$FAKE_STT_CLI" ]]; then
+        bash "$FAKE_STT_CLI" "$@"
+    else
+        echo "{\"id\":\"msg004\",\"jid\":\"358445150070@s.whatsapp.net\",\"from\":\"Juho\",\"text\":null,\"ts\":\"2026-04-03T10:00:03.000Z\",\"type\":\"voice\",\"duration\":4,\"audio_path\":\"$FAKE_AUDIO\"}"
+    fi
+}
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "0" "$RC" "returns 0 for voice message with audio_path"
+ENTRY=$(cat "$INBOX_DIR"/whatsapp-msg004.jsonl 2>/dev/null)
+assert_contains "$ENTRY" 'transcribed whatsapp voice' "voice message body is transcription"
+assert_contains "$ENTRY" '"source":"whatsapp"' "voice entry has source whatsapp"
+# Audio file should be cleaned up after transcription
+test ! -f "$FAKE_AUDIO" && pass "audio file cleaned up after transcription" || fail "audio file cleaned up after transcription"
+unset -f sudo
+
+# Test: voice message without STT CLI falls back to placeholder
+STT_CLI="/nonexistent/stt-transcribe.sh"
+FAKE_AUDIO2=$(mktemp /tmp/whatsapp-voice-XXXXXX.oga)
+echo "fake audio" > "$FAKE_AUDIO2"
+sudo() {
+    echo "{\"id\":\"msg005\",\"jid\":\"358445150070@s.whatsapp.net\",\"from\":\"Juho\",\"text\":null,\"ts\":\"2026-04-03T10:00:04.000Z\",\"type\":\"voice\",\"duration\":3,\"audio_path\":\"$FAKE_AUDIO2\"}"
+}
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "0" "$RC" "returns 0 for voice without STT"
+ENTRY=$(cat "$INBOX_DIR"/whatsapp-msg005.jsonl 2>/dev/null)
+assert_contains "$ENTRY" 'STT not available' "voice fallback mentions STT not available"
+unset -f sudo
+rm -f "$FAKE_AUDIO2"
+
+# Test: voice message without audio_path (download failed)
+sudo() {
+    echo '{"id":"msg006","jid":"358445150070@s.whatsapp.net","from":"Juho","text":null,"ts":"2026-04-03T10:00:05.000Z","type":"voice","duration":2}'
+}
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "0" "$RC" "returns 0 for voice without audio_path"
+ENTRY=$(cat "$INBOX_DIR"/whatsapp-msg006.jsonl 2>/dev/null)
+assert_contains "$ENTRY" 'audio download failed' "voice without audio mentions download failed"
+unset -f sudo
+
+# Test: image message
+sudo() {
+    echo '{"id":"msg007","jid":"358445150070@s.whatsapp.net","from":"Juho","text":"look at this","ts":"2026-04-03T10:00:06.000Z","type":"image","mimetype":"image/jpeg"}'
+}
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "0" "$RC" "returns 0 for image message"
+ENTRY=$(cat "$INBOX_DIR"/whatsapp-msg007.jsonl 2>/dev/null)
+assert_contains "$ENTRY" '[image' "image message has type label"
+assert_contains "$ENTRY" 'look at this' "image caption preserved"
+unset -f sudo
+
+# Test: document message
+sudo() {
+    echo '{"id":"msg008","jid":"358445150070@s.whatsapp.net","from":"Juho","text":null,"ts":"2026-04-03T10:00:07.000Z","type":"document","filename":"report.pdf"}'
+}
+clear_inbox
+collect_whatsapp; RC=$?
+ENTRY=$(cat "$INBOX_DIR"/whatsapp-msg008.jsonl 2>/dev/null)
+assert_contains "$ENTRY" '[document: report.pdf]' "document message has filename"
+unset -f sudo
+
+# Test: reply_to context included in body
+sudo() {
+    echo '{"id":"msg009","jid":"358445150070@s.whatsapp.net","from":"Juho","text":"check this","ts":"2026-04-03T10:00:08.000Z","type":"text","reply_to":{"id":"msg001","from":"358445150070","text":"original msg"}}'
+}
+clear_inbox
+collect_whatsapp; RC=$?
+assert_eq "0" "$RC" "returns 0 for reply message"
+ENTRY=$(cat "$INBOX_DIR"/whatsapp-msg009.jsonl 2>/dev/null)
+assert_contains "$ENTRY" 'replying to 358445150070' "reply_to from included in body"
+assert_contains "$ENTRY" 'original msg' "reply_to text included in body"
+assert_contains "$ENTRY" 'check this' "reply message text preserved"
+unset -f sudo
+
+# Test: non-reply has no reply_to prefix
+sudo() {
+    echo '{"id":"msg010","jid":"358445150070@s.whatsapp.net","from":"Juho","text":"plain message","ts":"2026-04-03T10:00:09.000Z","type":"text"}'
+}
+clear_inbox
+collect_whatsapp; RC=$?
+ENTRY=$(cat "$INBOX_DIR"/whatsapp-msg010.jsonl 2>/dev/null)
+echo "$ENTRY" | grep -q 'replying to' && fail "non-reply has no reply_to prefix" || pass "non-reply has no reply_to prefix"
+unset -f sudo
+
+rm -f "$FAKE_STT_CLI" "$FAKE_WA_CLI"
+WHATSAPP_CLI="$SAVE_WHATSAPP_CLI"
 
 echo ""
 
