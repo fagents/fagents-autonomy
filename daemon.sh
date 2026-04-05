@@ -183,6 +183,14 @@ read_prompt() {
             content="${content//\{\{INBOX_BLOCK\}\}/}"
             content="${content//\{\{MENTIONS_BLOCK\}\}/}"
         fi
+        # Prepend awareness block (time, context%, git)
+        local awareness=""
+        if [ -x "$SCRIPT_DIR/awareness/build-block.sh" ]; then
+            awareness=$(cd "$PROJECT_DIR" && "$SCRIPT_DIR/awareness/build-block.sh" 2>/dev/null) || true
+        fi
+        if [ -n "$awareness" ]; then
+            printf '%s\n\n' "$awareness"
+        fi
         echo "$content"
     else
         echo "ERROR: prompt file not found: $file" >&2

@@ -1,21 +1,22 @@
 #!/bin/bash
-
-# Context Inject — UserPromptSubmit hook
-# Thin orchestrator: calls awareness scripts and prints results.
-# Trigger: UserPromptSubmit
+# Build awareness block for prompt injection.
+# Replaces hooks/inject-context.sh (UserPromptSubmit hook).
+# Called by daemon.sh read_prompt() before each LLM invocation.
+# Output: plain text block, empty if no data.
 
 AUTONOMY_DIR="${AUTONOMY_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-# Awareness: time
+# Time
 TIME=$("$AUTONOMY_DIR/awareness/time.sh" 2>/dev/null) || true
 [ -n "$TIME" ] && echo "Current time: $TIME"
 
-# Awareness: context window usage
+# Context window usage (eval sets pct, label_long, used_tokens, ctx_size)
 CTX_OUT=$("$AUTONOMY_DIR/awareness/context.sh" 2>/dev/null) || true
 if [ -n "$CTX_OUT" ]; then
     eval "$CTX_OUT"
+    # shellcheck disable=SC2154
     echo "Context: ${pct}% (${label_long:-UNKNOWN}) ~${used_tokens}tok / ${ctx_size}"
-    # Awareness: compaction detection
+    # Compaction detection
     COMPACT=$("$AUTONOMY_DIR/awareness/compaction.sh" "$pct" 2>/dev/null) || true
     if [ -n "$COMPACT" ]; then
         echo "$COMPACT"
@@ -24,8 +25,6 @@ if [ -n "$CTX_OUT" ]; then
     fi
 fi
 
-# Awareness: git (incoming commits)
+# Git incoming commits
 GIT_CTX=$("$AUTONOMY_DIR/awareness/git.sh" 2>/dev/null) || true
-if [ -n "$GIT_CTX" ]; then
-    echo "$GIT_CTX"
-fi
+[ -n "$GIT_CTX" ] && echo "$GIT_CTX"

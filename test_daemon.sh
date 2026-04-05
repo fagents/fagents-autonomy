@@ -1678,19 +1678,19 @@ rm -rf "$CS_PROJECT"
 
 echo ""
 
-# ── inject-context.sh tests ──
+# ── awareness/build-block.sh tests ──
 
-echo "inject-context.sh:"
+echo "awareness/build-block.sh:"
 
-IC_SCRIPT="$SCRIPT_DIR/hooks/inject-context.sh"
+BB_SCRIPT="$SCRIPT_DIR/awareness/build-block.sh"
 
 # Setup: fake AUTONOMY_DIR with mock awareness scripts
-IC_DIR=$(mktemp -d)
-mkdir -p "$IC_DIR/awareness"
+BB_DIR=$(mktemp -d)
+mkdir -p "$BB_DIR/awareness"
 
-make_echo_mock "$IC_DIR" time.sh "20:15:00 EET"
+make_echo_mock "$BB_DIR" time.sh "20:15:00 EET"
 
-cat > "$IC_DIR/awareness/context.sh" << 'MOCK'
+cat > "$BB_DIR/awareness/context.sh" << 'MOCK'
 #!/bin/bash
 echo "pct='63'"
 echo "label='WARM'"
@@ -1698,42 +1698,102 @@ echo "label_long='WARMING'"
 echo "used_tokens='126000'"
 echo "ctx_size='200000'"
 MOCK
-chmod +x "$IC_DIR/awareness/context.sh"
+chmod +x "$BB_DIR/awareness/context.sh"
 
-make_silent_mock "$IC_DIR" compaction.sh
-make_silent_mock "$IC_DIR" git.sh
+make_silent_mock "$BB_DIR" compaction.sh
+make_silent_mock "$BB_DIR" git.sh
 
 # Test: time in output
-OUTPUT=$(AUTONOMY_DIR="$IC_DIR" bash "$IC_SCRIPT" 2>/dev/null) || true
-assert_contains "$OUTPUT" "Current time: 20:15:00 EET" "inject-context: time in output"
+OUTPUT=$(AUTONOMY_DIR="$BB_DIR" bash "$BB_SCRIPT" 2>/dev/null) || true
+assert_contains "$OUTPUT" "Current time: 20:15:00 EET" "build-block: time in output"
 
 # Test: context line formatted correctly
-assert_contains "$OUTPUT" "Context: 63% (WARMING)" "inject-context: context pct and label"
-assert_contains "$OUTPUT" "~126000tok" "inject-context: tokens in context line"
+assert_contains "$OUTPUT" "Context: 63% (WARMING)" "build-block: context pct and label"
+assert_contains "$OUTPUT" "~126000tok" "build-block: tokens in context line"
 
 # Test: compaction message shown when triggered
-make_echo_mock "$IC_DIR" compaction.sh "COMPACTION: read SOUL.md, TEAM.md, MEMORY.md"
-OUTPUT=$(AUTONOMY_DIR="$IC_DIR" bash "$IC_SCRIPT" 2>/dev/null) || true
-assert_contains "$OUTPUT" "COMPACTION" "inject-context: compaction warning shown"
+make_echo_mock "$BB_DIR" compaction.sh "COMPACTION: read SOUL.md, TEAM.md, MEMORY.md"
+OUTPUT=$(AUTONOMY_DIR="$BB_DIR" bash "$BB_SCRIPT" 2>/dev/null) || true
+assert_contains "$OUTPUT" "COMPACTION" "build-block: compaction warning shown"
 
 # Test: git context shown when present
-cat > "$IC_DIR/awareness/git.sh" << 'MOCK'
+cat > "$BB_DIR/awareness/git.sh" << 'MOCK'
 #!/bin/bash
 echo "New commits in autonomy (origin/main):"
 echo "abc1234 Fix bug"
 MOCK
-chmod +x "$IC_DIR/awareness/git.sh"
-OUTPUT=$(AUTONOMY_DIR="$IC_DIR" bash "$IC_SCRIPT" 2>/dev/null) || true
-assert_contains "$OUTPUT" "New commits" "inject-context: git context shown"
+chmod +x "$BB_DIR/awareness/git.sh"
+OUTPUT=$(AUTONOMY_DIR="$BB_DIR" bash "$BB_SCRIPT" 2>/dev/null) || true
+assert_contains "$OUTPUT" "New commits" "build-block: git context shown"
 
 # Test: no scripts — no output
-IC_EMPTY=$(mktemp -d)
-mkdir -p "$IC_EMPTY/awareness"
-OUTPUT=$(AUTONOMY_DIR="$IC_EMPTY" bash "$IC_SCRIPT" 2>/dev/null) || true
-assert_empty "$OUTPUT" "inject-context: no scripts — no output"
-rm -rf "$IC_EMPTY"
+BB_EMPTY=$(mktemp -d)
+mkdir -p "$BB_EMPTY/awareness"
+OUTPUT=$(AUTONOMY_DIR="$BB_EMPTY" bash "$BB_SCRIPT" 2>/dev/null) || true
+assert_empty "$OUTPUT" "build-block: no scripts — no output"
+rm -rf "$BB_EMPTY"
 
-rm -rf "$IC_DIR"
+rm -rf "$BB_DIR"
+
+echo ""
+
+# ── read_prompt() awareness injection test ──
+
+echo "read_prompt() awareness injection:"
+
+# Setup: create a minimal prompt file and a mock build-block.sh
+RP_DIR=$(mktemp -d)
+mkdir -p "$RP_DIR/prompts" "$RP_DIR/awareness"
+
+echo "Hello {{AGENT_NAME}}" > "$RP_DIR/prompts/test.md"
+
+cat > "$RP_DIR/awareness/build-block.sh" << 'MOCK'
+#!/bin/bash
+echo "Current time: 14:00:00 EET"
+echo "Context: 42% (HEALTHY) ~84000tok / 200000"
+MOCK
+chmod +x "$RP_DIR/awareness/build-block.sh"
+
+# Source read_prompt from daemon.sh — need to set up its dependencies
+# We extract just read_prompt and its required vars
+SAVE_SCRIPT_DIR="$SCRIPT_DIR"
+SCRIPT_DIR="$RP_DIR"
+PROMPTS_DIR="$RP_DIR/prompts"
+PROJECT_DIR="$RP_DIR"
+AGENT="TestBot"
+INBOX_BLOCK=""
+INBOX_COUNT=0
+INTERVAL=21600
+CH_ARRAY=(general)
+AUTONOMY_DIR="$RP_DIR"
+
+# Source the function
+eval "$(sed -n '/^read_prompt()/,/^}/p' "$SAVE_SCRIPT_DIR/daemon.sh")"
+
+# Test: awareness block appears before prompt content
+OUTPUT=$(read_prompt "test.md" 2>/dev/null)
+assert_contains "$OUTPUT" "Current time: 14:00:00 EET" "read_prompt: awareness time injected"
+assert_contains "$OUTPUT" "Context: 42%" "read_prompt: awareness context injected"
+assert_contains "$OUTPUT" "Hello TestBot" "read_prompt: prompt content preserved"
+
+# Test: awareness appears before prompt content (order check)
+TIME_POS=$(echo "$OUTPUT" | grep -n "Current time" | head -1 | cut -d: -f1)
+HELLO_POS=$(echo "$OUTPUT" | grep -n "Hello TestBot" | head -1 | cut -d: -f1)
+if [ -n "$TIME_POS" ] && [ -n "$HELLO_POS" ] && [ "$TIME_POS" -lt "$HELLO_POS" ]; then
+    pass "read_prompt: awareness block appears before prompt content"
+else
+    fail "read_prompt: awareness block should appear before prompt content"
+fi
+
+# Test: no build-block.sh — prompt still works
+rm "$RP_DIR/awareness/build-block.sh"
+OUTPUT=$(read_prompt "test.md" 2>/dev/null)
+assert_contains "$OUTPUT" "Hello TestBot" "read_prompt: works without build-block.sh"
+# Should not contain awareness data
+echo "$OUTPUT" | grep -q "Current time" && fail "read_prompt: no awareness when build-block.sh missing" || pass "read_prompt: no awareness when build-block.sh missing"
+
+rm -rf "$RP_DIR"
+SCRIPT_DIR="$SAVE_SCRIPT_DIR"
 
 echo ""
 
