@@ -70,6 +70,23 @@ import os
 agent = '$AGENT'
 comms_url = '$COMMS_URL'
 comms_token = '$COMMS_TOKEN'
+ctx_size = 200000
+KNOWN_CONTEXT_WINDOWS = [200_000, 1_000_000]
+last_tool = 'unknown'
+
+def push_health(context_pct, tool_name):
+    payload = json.dumps({'context_pct': context_pct, 'status': 'active', 'last_tool': tool_name})
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f'{comms_url}/api/agents/{agent}/health',
+            data=payload.encode(),
+            headers={'Authorization': f'Bearer {comms_token}', 'Content-Type': 'application/json'},
+            method='POST',
+        )
+        urllib.request.urlopen(req, timeout=3)
+    except Exception:
+        pass
 
 def summarize_tool(name, inp):
     if name == 'Bash':
@@ -146,6 +163,22 @@ for line in sys.stdin:
                 inp = block.get('input', {})
                 detail = summarize_tool(name, inp)
                 events.append({'ts': ts, 'type': 'tool', 'summary': name, 'detail': detail})
+                last_tool = name
+
+        # Push health with context% from message usage (replaces PostToolUse hook)
+        usage = msg.get('usage', {})
+        if usage:
+            inp_tok = usage.get('input_tokens', 0)
+            cc = usage.get('cache_creation_input_tokens', 0)
+            cr = usage.get('cache_read_input_tokens', 0)
+            total = inp_tok + cc + cr
+            if total > ctx_size:
+                for w in KNOWN_CONTEXT_WINDOWS:
+                    if w > ctx_size:
+                        ctx_size = w
+                        break
+            pct = (total * 100) // ctx_size if ctx_size > 0 else 0
+            push_health(pct, last_tool)
 
     elif entry_type == 'user':
         msg = d.get('message', {})
