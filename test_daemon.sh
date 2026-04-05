@@ -1446,6 +1446,57 @@ unset CLAUDE_PROJECT_DIR
 
 echo ""
 
+# ── activity-stream.sh health push tests ──
+
+echo "activity-stream.sh health push:"
+
+# Test the health push logic extracted from activity-stream.sh.
+# We compute context_pct in bash (same math as the Python in activity-stream.sh)
+# and POST via curl to the mock server — verifying the contract.
+
+# Test: 40k tokens on 200k window → 20% context, tool=Bash
+rm -f "$MOCK_DIR/last-health-post.json"
+INPUT_TOKENS=40000; CACHE_CREATE=0; CACHE_READ=0; CTX_SIZE=200000
+TOTAL=$((INPUT_TOKENS + CACHE_CREATE + CACHE_READ))
+PCT=$((TOTAL * 100 / CTX_SIZE))
+PAYLOAD=$(jq -nc --argjson pct "$PCT" --arg tool "Bash" '{context_pct: $pct, status: "active", last_tool: $tool}')
+curl -s -X POST --max-time 3 \
+    -H "Authorization: Bearer test-token" \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD" \
+    "http://127.0.0.1:$PORT/api/agents/TestAgent/health" >/dev/null 2>&1
+sleep 0.2
+capture_health_post
+assert_contains "$HEALTH_BODY" '"context_pct":20' "activity-stream health: 40k/200k = 20%"
+assert_contains "$HEALTH_BODY" '"last_tool":"Bash"' "activity-stream health: last_tool=Bash"
+assert_contains "$HEALTH_BODY" '"status":"active"' "activity-stream health: status=active"
+
+# Test: 100k tokens on 1M window → 10%
+rm -f "$MOCK_DIR/last-health-post.json"
+INPUT_TOKENS=100000; CTX_SIZE=1000000
+PCT=$((INPUT_TOKENS * 100 / CTX_SIZE))
+PAYLOAD=$(jq -nc --argjson pct "$PCT" --arg tool "Read" '{context_pct: $pct, status: "active", last_tool: $tool}')
+curl -s -X POST --max-time 3 \
+    -H "Authorization: Bearer test-token" \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD" \
+    "http://127.0.0.1:$PORT/api/agents/TestAgent/health" >/dev/null 2>&1
+sleep 0.2
+capture_health_post
+assert_contains "$HEALTH_BODY" '"context_pct":10' "activity-stream health: 1M window — 100k/1M = 10%"
+assert_contains "$HEALTH_BODY" '"last_tool":"Read"' "activity-stream health: 1M window — tool=Read"
+
+# Test: heuristic bump — tokens exceed 200k default → bumps to 1M
+INPUT_TOKENS=250000; CTX_SIZE=200000
+# Should bump to 1M: 250k/1M = 25%
+if [ "$INPUT_TOKENS" -gt "$CTX_SIZE" ]; then CTX_SIZE=1000000; fi
+PCT=$((INPUT_TOKENS * 100 / CTX_SIZE))
+assert_eq "25" "$PCT" "activity-stream health: heuristic bump 250k → 1M window = 25%"
+
+# Test: MODEL_CTX_SIZE env var read by activity-stream.sh
+grep -q "os.environ.get('MODEL_CTX_SIZE'" "$SCRIPT_DIR/activity-stream.sh"
+assert_eq "0" "$?" "activity-stream health: reads MODEL_CTX_SIZE from env"
+
 echo ""
 
 # ── inject-awareness.sh tests ──

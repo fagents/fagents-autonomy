@@ -70,7 +70,7 @@ import os
 agent = '$AGENT'
 comms_url = '$COMMS_URL'
 comms_token = '$COMMS_TOKEN'
-ctx_size = 200000
+ctx_size = int(os.environ.get('MODEL_CTX_SIZE', '200000'))
 KNOWN_CONTEXT_WINDOWS = [200_000, 1_000_000]
 last_tool = 'unknown'
 
