@@ -8,9 +8,6 @@
     ],
     "PostToolUse": [
       {"hooks": [{"type": "command", "command": "\"$AUTONOMY_DIR\"/hooks/activity-push.sh", "async": true, "timeout": 10}]}
-    ],
-    "Stop": [
-      {"hooks": [{"type": "command", "command": "\"$AUTONOMY_DIR\"/hooks/session-stop.sh", "timeout": 10}]}
     ]
   }
 }
