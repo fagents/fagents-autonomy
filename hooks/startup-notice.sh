@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# DEPRECATED: SessionStart hook removed — daemon logs config at startup instead.
+# Kept for reference. See plans/hook-elimination.md.
+
 # Startup Notice — SessionStart hook
 # Dynamically reads settings.json to show which hooks are active
 # and what awareness scripts they use.
