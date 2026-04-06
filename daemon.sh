@@ -708,8 +708,7 @@ while true; do
 
     if collect_and_wait; then
         PROMPT_FILE="$PROMPT_MSG"
-        # Extract wake channel from first comms message for hooks
-        export WAKE_CHANNEL
+        # Extract wake channel from first comms message
         WAKE_CHANNEL=$(cat "$INBOX_DIR"/*.jsonl 2>/dev/null | jq -rs '
             [.[] | select(.source == "comms")] | first // {} | .channel // "general"
         ' 2>/dev/null) || WAKE_CHANNEL="general"
@@ -718,7 +717,7 @@ while true; do
         log "[$AGENT] Woke on message (channel: $WAKE_CHANNEL, inbox: $INBOX_COUNT msgs)..."
     else
         PROMPT_FILE="$PROMPT_REMBEAT"
-        export WAKE_CHANNEL="general"
+        WAKE_CHANNEL="general"
         log "[$AGENT] Rembeat..."
     fi
     check_pause

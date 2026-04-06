@@ -75,31 +75,21 @@ fagents-autonomy/
   prompts/
     rembeat.md          — Default idle rembeat prompt
     msgbeat.md          — Default message-wake prompt (has {{MENTIONS_BLOCK}} placeholder)
-  hooks.json            — Claude Code permissions/hooks (source of truth)
-  deploy-hooks.sh       — Apply hooks.json to Claude's settings
   send.sh               — Convenience: send a comms message from the shell
   activity-stream.sh    — Reports tool activity to fagents-comms activity endpoint
-  awareness/            — Introspection scripts (context %, health reporting)
+  awareness/            — Introspection scripts (context %, health reporting, prompt injection)
   comms/
     client.sh           — Bash comms client (curl wrapper)
-  test_daemon.sh        — Test suite (202 tests)
+  test_daemon.sh        — Test suite
 ```
 
 **Prompt override:** Place `prompts/rembeat.md` or `prompts/msgbeat.md` in `$PROJECT_DIR/prompts/` to override the repo defaults. Agent-local prompts take priority.
 
 ---
 
-## Hooks
+## Awareness
 
-`hooks.json` defines Claude Code permissions (tools allowed/denied) and shell hooks (pre/post tool use). It is the source of truth — edit it here, then run:
-
-```bash
-./deploy-hooks.sh
-```
-
-This copies the hooks config to the Claude settings location. Hooks hot-reload from disk — no claude restart needed after deploy.
-
-**Note:** `PreToolUse` blocking hooks require `exit 2` + stderr output. The old `decision: "block"` format is silently ignored.
+Context awareness (time, context%, git status) is injected into prompts by `awareness/build-block.sh`, called from `read_prompt()` in the daemon loop. Health metrics are pushed to fagents-comms by `activity-stream.sh` which tails session JSONL in real-time. No Claude Code hooks are used.
 
 ---
 
@@ -149,7 +139,7 @@ $PROJECT_DIR/
 bash test_daemon.sh
 ```
 
-**257 tests** covering: daemon env validation, prompt selection, rembeat/msgbeat wake logic, inbox queue, email collection, PAUSE detection, config parsing, activity stream, hooks, and bootloader-check scripts.
+Tests cover: daemon env validation, prompt selection, rembeat/msgbeat wake logic, inbox queue, email collection, pause detection, config parsing, activity stream, awareness, and bootloader-check scripts.
 
 ---
 

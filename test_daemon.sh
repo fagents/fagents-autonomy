@@ -223,7 +223,7 @@ print('WHATSAPP_CADENCE=3')
 print('WHATSAPP_CLI="/nonexistent/whatsapp.mjs"')
 print()
 
-funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'collect_whatsapp', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms', 'push_activity']
+funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'collect_whatsapp', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms', 'push_activity', 'check_pause']
 for name in funcs:
     pattern = rf'^{name}\(\) \{{.*?^\}}'
     match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
@@ -1499,155 +1499,44 @@ assert_eq "0" "$?" "activity-stream health: reads MODEL_CTX_SIZE from env"
 
 echo ""
 
-# ── inject-awareness.sh tests ──
+# ── check_pause() file-based tests ──
 
-echo "inject-awareness.sh:"
+echo "check_pause():"
 
-IA_SCRIPT="$SCRIPT_DIR/hooks/inject-awareness.sh"
+CP_DIR=$(mktemp -d)
+CP_PAUSE_FILE="$CP_DIR/daemon.pause"
 
-# Setup: fake AUTONOMY_DIR with mock awareness scripts
-IA_DIR=$(mktemp -d)
-mkdir -p "$IA_DIR/awareness"
+# Test: no pause file — returns immediately
+OUTPUT=$(PAUSE_FILE="$CP_PAUSE_FILE" check_pause 2>/dev/null)
+assert_eq "0" "$?" "check_pause: no file — returns immediately"
 
-# Mock time.sh
-make_echo_mock "$IA_DIR" time.sh "14:30:00 EET"
-
-# Mock context.sh
-cat > "$IA_DIR/awareness/context.sh" << 'MOCK'
-#!/bin/bash
-echo "pct='55'"
-echo "label='WARM'"
-echo "label_long='WARMING'"
-echo "formatted='55% (WARM)'"
-echo "used_tokens='110000'"
-echo "ctx_size='200000'"
-MOCK
-chmod +x "$IA_DIR/awareness/context.sh"
-
-# Mock compaction.sh (no output = no compaction)
-make_silent_mock "$IA_DIR" compaction.sh
-
-# Mock comms.sh (no output = no alerts)
-make_silent_mock "$IA_DIR" comms.sh
-
-# Test: full output is valid JSON
-OUTPUT=$(AUTONOMY_DIR="$IA_DIR" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
-echo "$OUTPUT" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null
-assert_eq "0" "$?" "inject-awareness: output is valid JSON"
-
-# Test: output contains time
-assert_contains "$OUTPUT" "14:30:00 EET" "inject-awareness: time in output"
-
-# Test: output contains context formatted
-assert_contains "$OUTPUT" "55% (WARM)" "inject-awareness: context in output"
-
-# Test: output has correct hookEventName
-HOOK_EVENT=$(echo "$OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['hookSpecificOutput']['hookEventName'])" 2>/dev/null) || true
-assert_eq "PreToolUse" "$HOOK_EVENT" "inject-awareness: hookEventName=PreToolUse"
-
-# Test: comms alert appended when present
-make_echo_mock "$IA_DIR" comms.sh "PAUSE active"
-OUTPUT=$(AUTONOMY_DIR="$IA_DIR" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
-assert_contains "$OUTPUT" "PAUSE active" "inject-awareness: comms alert in output"
-
-# Test: compaction warning appended when triggered
-make_echo_mock "$IA_DIR" compaction.sh "COMPACTION DETECTED"
-OUTPUT=$(AUTONOMY_DIR="$IA_DIR" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
-assert_contains "$OUTPUT" "COMPACTION DETECTED" "inject-awareness: compaction warning in output"
-
-# Test: no awareness scripts — still valid JSON with empty context
-IA_EMPTY=$(mktemp -d)
-mkdir -p "$IA_EMPTY/awareness"
-OUTPUT=$(AUTONOMY_DIR="$IA_EMPTY" bash "$IA_SCRIPT" </dev/null 2>/dev/null) || true
-echo "$OUTPUT" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null
-assert_eq "0" "$?" "inject-awareness: no scripts — still valid JSON"
-rm -rf "$IA_EMPTY"
-
-rm -rf "$IA_DIR"
-
-echo ""
-
-# ── comms.sh (awareness) tests ──
-
-echo "comms.sh (awareness):"
-
-COMMS_SCRIPT="$SCRIPT_DIR/awareness/comms.sh"
-
-# Setup: temp project dir with inbox
-CS_PROJECT=$(mktemp -d)
-CS_INBOX="$CS_PROJECT/.queue/inbox"
-mkdir -p "$CS_INBOX"
-
-# Helper to write inbox .jsonl files
-write_inbox_msg() {
-    local id="$1" from="$2" body="$3"
-    echo "{\"id\":\"$id\",\"source\":\"comms\",\"from\":\"$from\",\"body\":\"$body\",\"trusted\":true}" \
-        > "$CS_INBOX/${id}.jsonl"
-}
-clear_inbox() {
-    rm -f "$CS_INBOX"/*.jsonl
-}
-
-# Test: PAUSE from anyone — triggers alert
-clear_inbox
-write_inbox_msg "comms-general-001" "Juho" "PAUSE"
-OUTPUT=$(PROJECT_DIR="$CS_PROJECT" bash "$COMMS_SCRIPT" 2>/dev/null) || true
-assert_contains "$OUTPUT" "PAUSE" "comms.sh: PAUSE triggers alert"
-assert_contains "$OUTPUT" "Juho" "comms.sh: PAUSE alert includes sender"
-assert_contains "$OUTPUT" "STOP IMMEDIATELY" "comms.sh: PAUSE alert is strong"
-
-# Test: GO after PAUSE — no alert
-clear_inbox
-write_inbox_msg "comms-general-001" "Juho" "PAUSE"
-write_inbox_msg "comms-general-002" "Juho" "GO"
-OUTPUT=$(PROJECT_DIR="$CS_PROJECT" bash "$COMMS_SCRIPT" 2>/dev/null) || true
-if echo "$OUTPUT" | grep -qiF "PAUSE"; then
-    fail "comms.sh: GO cancels PAUSE (alert still present)"
+# Test: pause file present — blocks, then resumes when removed
+touch "$CP_PAUSE_FILE"
+(
+    sleep 1
+    rm -f "$CP_PAUSE_FILE"
+) &
+REMOVER_PID=$!
+START_TIME=$(date +%s)
+PAUSE_FILE="$CP_PAUSE_FILE" check_pause 2>/dev/null
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+wait "$REMOVER_PID" 2>/dev/null || true
+if [ "$ELAPSED" -ge 1 ] && [ "$ELAPSED" -le 5 ]; then
+    pass "check_pause: blocks while file exists, resumes on removal"
 else
-    pass "comms.sh: GO cancels PAUSE"
+    fail "check_pause: blocks while file exists, resumes on removal (elapsed: ${ELAPSED}s)"
 fi
 
-# Test: PAUSE from non-Juho team member — also triggers
-clear_inbox
-write_inbox_msg "comms-general-001" "FTF" "PAUSE check the logs"
-OUTPUT=$(PROJECT_DIR="$CS_PROJECT" bash "$COMMS_SCRIPT" 2>/dev/null) || true
-assert_contains "$OUTPUT" "PAUSE" "comms.sh: PAUSE from any team member triggers alert"
-assert_contains "$OUTPUT" "FTF" "comms.sh: alert includes non-Juho sender"
+# Test: pause file — logs PAUSED message
+touch "$CP_PAUSE_FILE"
+(sleep 1; rm -f "$CP_PAUSE_FILE") &
+REMOVER_PID=$!
+OUTPUT=$(PAUSE_FILE="$CP_PAUSE_FILE" check_pause 2>&1) || true
+wait "$REMOVER_PID" 2>/dev/null || true
+assert_contains "$OUTPUT" "PAUSED" "check_pause: logs PAUSED message"
 
-# Test: no PAUSE messages — silent
-clear_inbox
-write_inbox_msg "comms-general-001" "FTW" "Hello team"
-OUTPUT=$(PROJECT_DIR="$CS_PROJECT" bash "$COMMS_SCRIPT" 2>/dev/null) || true
-assert_empty "$OUTPUT" "comms.sh: non-PAUSE messages — silent"
-
-# Test: empty inbox — silent
-clear_inbox
-OUTPUT=$(PROJECT_DIR="$CS_PROJECT" bash "$COMMS_SCRIPT" 2>/dev/null) || true
-assert_empty "$OUTPUT" "comms.sh: empty inbox — silent"
-
-# Test: no inbox dir — silent exit
-CS_NOQUEUE=$(mktemp -d)
-OUTPUT=$(PROJECT_DIR="$CS_NOQUEUE" bash "$COMMS_SCRIPT" 2>/dev/null) || true
-assert_empty "$OUTPUT" "comms.sh: no inbox dir — silent exit"
-rm -rf "$CS_NOQUEUE"
-
-# Test: PAUSED mid-word doesn't trigger (requires PAUSE at start of body)
-clear_inbox
-write_inbox_msg "comms-general-001" "Juho" "PAUSED for lunch"
-OUTPUT=$(PROJECT_DIR="$CS_PROJECT" bash "$COMMS_SCRIPT" 2>/dev/null) || true
-if echo "$OUTPUT" | grep -qiF "STOP IMMEDIATELY"; then
-    fail "comms.sh: PAUSED (not PAUSE) — false alert"
-else
-    pass "comms.sh: PAUSED (not PAUSE) — no false alert"
-fi
-
-# Test: PAUSE with message body preserved in alert
-clear_inbox
-write_inbox_msg "comms-general-001" "Juho" "PAUSE need to review the deploy plan"
-OUTPUT=$(PROJECT_DIR="$CS_PROJECT" bash "$COMMS_SCRIPT" 2>/dev/null) || true
-assert_contains "$OUTPUT" "need to review" "comms.sh: PAUSE message body in alert"
-
-rm -rf "$CS_PROJECT"
+rm -rf "$CP_DIR"
 
 echo ""
 
@@ -1769,54 +1658,6 @@ rm -rf "$RP_DIR"
 SCRIPT_DIR="$SAVE_SCRIPT_DIR"
 
 echo ""
-
-# ── deploy-hooks.sh merge logic tests ──
-
-echo "deploy-hooks merge:"
-
-DH_TMP=$(mktemp -d)
-
-merge_hooks() {
-    python3 -c "
-import json, sys
-with open(sys.argv[1]) as f: hooks_config = json.load(f)
-try:
-    with open(sys.argv[2]) as f: settings = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError): settings = {}
-settings['hooks'] = hooks_config['hooks']
-with open(sys.argv[2], 'w') as f:
-    json.dump(settings, f, indent=2)
-    f.write('\n')
-" "$1" "$2"
-}
-
-# Test: merge hooks into existing settings — preserves other keys
-echo '{"hooks": {"PreToolUse": [{"matcher": ".*"}]}}' > "$DH_TMP/hooks.json"
-echo '{"permissions": {"allow": ["Read"]}, "hooks": {"old": []}}' > "$DH_TMP/settings.json"
-merge_hooks "$DH_TMP/hooks.json" "$DH_TMP/settings.json"
-MERGED=$(cat "$DH_TMP/settings.json")
-assert_contains "$MERGED" '"permissions"' "deploy-merge: preserves existing keys"
-assert_contains "$MERGED" '"PreToolUse"' "deploy-merge: new hooks present"
-if echo "$MERGED" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'old' not in d['hooks']" 2>/dev/null; then
-    pass "deploy-merge: old hooks replaced"
-else
-    fail "deploy-merge: old hooks replaced"
-fi
-
-# Test: merge into non-existent settings — creates new
-rm -f "$DH_TMP/new-settings.json"
-merge_hooks "$DH_TMP/hooks.json" "$DH_TMP/new-settings.json"
-assert_eq "0" "$?" "deploy-merge: creates settings from scratch"
-NEW_MERGED=$(cat "$DH_TMP/new-settings.json")
-assert_contains "$NEW_MERGED" '"PreToolUse"' "deploy-merge: hooks in new file"
-
-# Test: merge into malformed settings — treats as empty
-echo 'not json{{{' > "$DH_TMP/bad-settings.json"
-merge_hooks "$DH_TMP/hooks.json" "$DH_TMP/bad-settings.json"
-BAD_MERGED=$(cat "$DH_TMP/bad-settings.json")
-assert_contains "$BAD_MERGED" '"PreToolUse"' "deploy-merge: recovers from malformed settings"
-
-rm -rf "$DH_TMP"
 
 echo ""
 

@@ -1,7 +1,0 @@
-{
-  "hooks": {
-    "PreToolUse": [
-      {"hooks": [{"type": "command", "command": "\"$AUTONOMY_DIR\"/hooks/inject-awareness.sh"}]}
-    ]
-  }
-}
