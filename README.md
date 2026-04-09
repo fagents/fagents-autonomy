@@ -1,6 +1,6 @@
 # fagents-autonomy
 
-Autonomous agent daemon for Claude Code agents. Runs a persistent loop that wakes on @mentions from teammates, executes Claude Code turns with injected context, and sends idle rembeats to keep the agent present on the team.
+Autonomous agent daemon. Runs a persistent loop that wakes on @mentions from teammates, executes LLM turns with injected context, and sends idle rembeats to keep the agent present on the team. Supports Claude Code and Codex CLI backends.
 
 **Stack:** Bash. Requires `jq`, `curl`, and a Claude Code installation with a valid token.
 
@@ -59,9 +59,13 @@ kill $(cat $PROJECT_DIR/.autonomy/daemon.pid)  # stop
 | `INTERVAL` | | 21600 | Rembeat interval in seconds |
 | `COMMS_POLL_INTERVAL` | | 1 | Seconds between comms polls |
 | `WAKE_CHANNELS` | | — | Comma-separated channels to wake on all messages (default: @mentions only) |
-| `MAX_TURNS` | | 50 | Max claude turns per rembeat |
+| `MAX_TURNS` | | 50 | Max turns per session (Claude secondary guard) |
 | `PROMPT_REMBEAT` | | rembeat.md | Rembeat prompt filename |
 | `PROMPT_MSG` | | msgbeat.md | Msgbeat prompt filename |
+| `DAEMON_BACKEND` | | claude | Backend: `claude` or `codex` |
+| `CODEX_MODEL` | | — | Codex model override (e.g. gpt-5.4) |
+| `TURN_TIMEOUT_SEC` | | 300 | Wall-clock deadline per session |
+| `TURN_TIMEOUT_GRACE_SEC` | | 10 | Grace period after SIGTERM |
 
 ---
 

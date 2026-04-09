@@ -223,7 +223,7 @@ print('WHATSAPP_CADENCE=3')
 print('WHATSAPP_CLI="/nonexistent/whatsapp.mjs"')
 print()
 
-funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'collect_whatsapp', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms', 'push_activity', 'check_pause']
+funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'collect_whatsapp', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms', 'push_activity', 'check_pause', 'run_with_watchdog', 'handle_backend_result', 'run_claude', 'run_codex', 'run_backend']
 for name in funcs:
     pattern = rf'^{name}\(\) \{{.*?^\}}'
     match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
@@ -245,6 +245,14 @@ trap stop_mock_server EXIT
 export COMMS_URL="http://127.0.0.1:$PORT"
 export COMMS_TOKEN="test-token"
 export AGENT="TestAgent"
+export DAEMON_BACKEND="claude"
+CODEX_MODEL=""
+TURN_TIMEOUT_SEC=300
+TURN_TIMEOUT_GRACE_SEC=10
+BACKEND_EXIT_CODE=0
+BACKEND_JSON=""
+BACKEND_SESSION_ID=""
+BACKEND_RESULT=""
 
 eval "$(extract_functions)"
 
@@ -1659,6 +1667,132 @@ SCRIPT_DIR="$SAVE_SCRIPT_DIR"
 
 echo ""
 
+# ── run_with_watchdog() tests ──
+
+echo "run_with_watchdog():"
+
+# Test: fast command returns exit code 0
+TURN_TIMEOUT_SEC=5
+TURN_TIMEOUT_GRACE_SEC=2
+run_with_watchdog true
+assert_eq "0" "$BACKEND_EXIT_CODE" "watchdog: fast command returns 0"
+
+# Test: command exit code preserved
+BACKEND_EXIT_CODE=0
+run_with_watchdog bash -c "exit 42"
+assert_eq "42" "$BACKEND_EXIT_CODE" "watchdog: non-zero exit code preserved"
+
+# Test: command killed after timeout — exit code 124
+TURN_TIMEOUT_SEC=1
+TURN_TIMEOUT_GRACE_SEC=1
+BACKEND_EXIT_CODE=0
+run_with_watchdog sleep 30
+assert_eq "124" "$BACKEND_EXIT_CODE" "watchdog: timeout returns 124"
+
+# Test: process group killed (child process also dies)
+TURN_TIMEOUT_SEC=1
+TURN_TIMEOUT_GRACE_SEC=1
+WD_MARKER="/tmp/watchdog-test-$$"
+rm -f "$WD_MARKER"
+run_with_watchdog bash -c "bash -c 'sleep 30; touch $WD_MARKER' & wait"
+sleep 1
+if [ -f "$WD_MARKER" ]; then
+    fail "watchdog: child process survived (marker exists)"
+else
+    pass "watchdog: process group killed (child also dead)"
+fi
+rm -f "$WD_MARKER"
+
+# Reset
+TURN_TIMEOUT_SEC=300
+TURN_TIMEOUT_GRACE_SEC=10
+
+echo ""
+
+# ── run_backend() dispatcher tests ──
+
+echo "run_backend():"
+
+# Test: unknown backend sets exit code 1
+DAEMON_BACKEND="unknown"
+run_backend "rembeat.md" 2>/dev/null
+assert_eq "1" "$BACKEND_EXIT_CODE" "run_backend: unknown backend sets exit code 1"
+assert_eq "" "$BACKEND_SESSION_ID" "run_backend: unknown backend clears session ID"
+
+# Test: DAEMON_BACKEND=claude dispatches (fails on missing prompt, not unknown backend)
+DAEMON_BACKEND="claude"
+BACKEND_EXIT_CODE=999
+run_backend "__nonexistent_prompt__.md" 2>/dev/null
+# Should have run (exit code changed from 999)
+if [ "$BACKEND_EXIT_CODE" -ne 999 ]; then
+    pass "run_backend: claude backend dispatched"
+else
+    fail "run_backend: claude backend dispatched"
+fi
+
+# Test: DAEMON_BACKEND=codex dispatches (will fail on missing codex, but proves dispatch)
+DAEMON_BACKEND="codex"
+BACKEND_EXIT_CODE=999
+run_backend "__nonexistent_prompt__.md" 2>/dev/null
+if [ "$BACKEND_EXIT_CODE" -ne 999 ]; then
+    pass "run_backend: codex backend dispatched"
+else
+    fail "run_backend: codex backend dispatched"
+fi
+
+# Reset
+DAEMON_BACKEND="claude"
+
+echo ""
+
+# ── Backend contract tests (run_claude output parsing) ──
+
+echo "backend contract:"
+
+# Test: run_claude sets BACKEND_SESSION_ID from mock JSON
+BACKEND_SESSION_ID=""
+BACKEND_RESULT=""
+BACKEND_JSON='{"session_id":"test-sid-123","result":"hello world"}'
+# Simulate what run_claude does after getting output
+BACKEND_SESSION_ID=$(echo "$BACKEND_JSON" | jq -r '.session_id // empty' 2>/dev/null)
+BACKEND_RESULT=$(echo "$BACKEND_JSON" | jq -r '.result // empty' 2>/dev/null)
+assert_eq "test-sid-123" "$BACKEND_SESSION_ID" "contract: session_id extracted from JSON"
+assert_eq "hello world" "$BACKEND_RESULT" "contract: result extracted from JSON"
+
+# Test: Codex JSONL session ID extraction
+CODEX_JSONL=$(mktemp)
+echo '{"type":"thread.started","thread_id":"thread_abc123"}' > "$CODEX_JSONL"
+echo '{"type":"turn.started"}' >> "$CODEX_JSONL"
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}' >> "$CODEX_JSONL"
+CODEX_SID=$(jq -r 'select(.type=="thread.started") | .thread_id // empty' "$CODEX_JSONL" 2>/dev/null | head -1)
+assert_eq "thread_abc123" "$CODEX_SID" "contract: codex thread_id extracted from JSONL"
+rm -f "$CODEX_JSONL"
+
+# Test: Codex JSONL without thread.started — empty SID
+CODEX_JSONL=$(mktemp)
+echo '{"type":"turn.started"}' > "$CODEX_JSONL"
+CODEX_SID=$(jq -r 'select(.type=="thread.started") | .thread_id // empty' "$CODEX_JSONL" 2>/dev/null | head -1)
+assert_eq "" "$CODEX_SID" "contract: missing thread.started gives empty SID"
+rm -f "$CODEX_JSONL"
+
+# Test: session ID fallback preserves previous SID
+SID="prev-session-id"
+BACKEND_SESSION_ID=""
+SID="${BACKEND_SESSION_ID:-$SID}"
+assert_eq "prev-session-id" "$SID" "contract: SID fallback preserves previous"
+
+# Test: session ID fallback uses new SID when available
+SID="prev-session-id"
+BACKEND_SESSION_ID="new-session-id"
+SID="${BACKEND_SESSION_ID:-$SID}"
+assert_eq "new-session-id" "$SID" "contract: SID fallback uses new when available"
+
+# Test: fresh session — empty SID is valid
+SID=""
+BACKEND_SESSION_ID=""
+SID="${BACKEND_SESSION_ID:-}"
+assert_eq "" "$SID" "contract: fresh session — empty SID valid"
+
 echo ""
 
 # ── process.sh tests ──
@@ -1706,6 +1840,16 @@ assert d['has_resume'] in (True, False)
 print('ok')
 " 2>/dev/null)
 assert_eq "ok" "$BOOL_CHECK" "process.sh: boolean values are True/False not strings"
+
+# Test: process.sh works with DAEMON_BACKEND=codex (still valid JSON)
+PROC_OUT=$(DAEMON_BACKEND=codex bash "$PROC_SCRIPT" 2>/dev/null) || true
+echo "$PROC_OUT" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null
+assert_eq "0" "$?" "process.sh: valid JSON with DAEMON_BACKEND=codex"
+
+# Test: context.sh exits early for non-Claude backend
+CTX_SCRIPT="$SCRIPT_DIR/awareness/context.sh"
+CTX_OUT=$(DAEMON_BACKEND=codex bash "$CTX_SCRIPT" 2>/dev/null) || true
+assert_eq "" "$CTX_OUT" "context.sh: silent exit for non-Claude backend"
 
 echo ""
 

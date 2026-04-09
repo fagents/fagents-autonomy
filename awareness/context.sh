@@ -8,6 +8,10 @@
 # On failure: outputs nothing (caller should handle empty output).
 
 AUTONOMY_DIR="${AUTONOMY_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
+# Context tracking is Claude-specific (reads .introspection-logs JSONL)
+[ "${DAEMON_BACKEND:-claude}" != "claude" ] && exit 0
+
 HELPER="$AUTONOMY_DIR/awareness/context-usage.sh"
 
 JSONL_DIR="${CLAUDE_PROJECT_DIR:-.}/.introspection-logs"

@@ -1,5 +1,5 @@
 #!/bin/bash
-# fagents daemon — autonomous agent loop via Claude Code
+# fagents daemon — autonomous agent loop
 #
 # Usage: AGENT=<name> COMMS_URL=... COMMS_TOKEN=... ./daemon.sh [interval_seconds]
 #
@@ -14,7 +14,11 @@
 #   PROMPT_MSG             Msgbeat prompt file (default: msgbeat.md)
 #   COMMS_POLL_INTERVAL=1  Seconds between HTTP polls (default: 1)
 #   WAKE_CHANNELS=ch1,ch2  Wake on all msgs in these channels (default: mentions-only)
-#   MAX_TURNS=50           Max turns per rembeat
+#   MAX_TURNS=50           Max turns per session (Claude secondary guard)
+#   DAEMON_BACKEND=claude  Backend: claude or codex (default: claude)
+#   CODEX_MODEL            Codex model override (e.g. gpt-5.4)
+#   TURN_TIMEOUT_SEC=300   Wall-clock deadline per session (default: 300)
+#   TURN_TIMEOUT_GRACE_SEC=10  Grace period after SIGTERM (default: 10)
 #
 # Prompt overrides: place files in $PROJECT_DIR/prompts/ to override defaults.
 # Local rembeat.md takes priority over the one in this repo's prompts/ dir.
@@ -56,6 +60,10 @@ CHANNELS="${CHANNELS:-general}"
 PROMPT_REMBEAT="${PROMPT_REMBEAT:-rembeat.md}"
 PROMPT_MSG="${PROMPT_MSG:-msgbeat.md}"
 MAX_TURNS="${MAX_TURNS:-50}"
+export DAEMON_BACKEND="${DAEMON_BACKEND:-claude}"  # exported: child scripts need it
+CODEX_MODEL="${CODEX_MODEL:-}"
+TURN_TIMEOUT_SEC="${TURN_TIMEOUT_SEC:-300}"
+TURN_TIMEOUT_GRACE_SEC="${TURN_TIMEOUT_GRACE_SEC:-10}"
 
 # Parse initial channel list from env (used as fallback)
 IFS=',' read -ra CH_ARRAY <<< "$CHANNELS"
@@ -114,6 +122,10 @@ fetch_config() {
     if [ -n "$server_rembeat" ]; then
         INTERVAL="$server_rembeat"
     fi
+    # Backend: server overrides env default
+    local server_backend
+    server_backend=$(echo "$resp" | jq -r '.config.backend // empty' 2>/dev/null) || true
+    [ -n "$server_backend" ] && DAEMON_BACKEND="$server_backend"
     return 0
 }
 
@@ -546,7 +558,7 @@ WHATSAPP_CADENCE=3
 collect_and_wait() {
     local deadline=$((SECONDS + INTERVAL))
 
-    # Drain: collect messages that arrived during the last claude run.
+    # Drain: collect messages that arrived during the last backend run.
     # With the queue, this is simple — collect and check if inbox has files.
     collect_comms || true
     if [ -n "$(find "$INBOX_DIR" -name '*.jsonl' -type f 2>/dev/null | head -1)" ]; then
@@ -581,28 +593,133 @@ collect_and_wait() {
     return 1
 }
 
+# Run a command in its own process group with wall-clock deadline.
+# Sets: BACKEND_EXIT_CODE (0=ok, 124=timeout, other=backend error)
+# Safe under set -e: always returns 0, caller reads BACKEND_EXIT_CODE.
+# Uses Python os.setsid() — macOS has no setsid binary.
+run_with_watchdog() {
+    python3 -c "
+import os, sys
+os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])
+" "$@" &
+    local backend_pid=$!
+
+    (
+        sleep "$TURN_TIMEOUT_SEC"
+        kill -TERM -"$backend_pid" 2>/dev/null || true
+        sleep "$TURN_TIMEOUT_GRACE_SEC"
+        kill -KILL -"$backend_pid" 2>/dev/null || true
+    ) &
+    local watchdog_pid=$!
+
+    wait "$backend_pid" 2>/dev/null && BACKEND_EXIT_CODE=0 || BACKEND_EXIT_CODE=$?
+
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+
+    # SIGTERM=143, SIGKILL=137 → normalize to 124 (timeout convention)
+    if [ "$BACKEND_EXIT_CODE" -eq 143 ] || [ "$BACKEND_EXIT_CODE" -eq 137 ]; then
+        BACKEND_EXIT_CODE=124
+    fi
+
+    return 0
+}
+
+# Log backend stderr and push activity error if present.
+# Usage: handle_backend_result <backend_name> <err_file> <files_to_clean...>
+handle_backend_result() {
+    local name="$1" err_file="$2"
+    shift 2
+    local _stderr
+    _stderr=$(cat "$err_file" 2>/dev/null)
+    rm -f "$err_file" "$@"
+    if [ -n "$_stderr" ]; then
+        log "$name stderr: $_stderr"
+        push_activity "error" "$(echo "$_stderr" | head -1 | cut -c1-200)"
+    fi
+    if [ "$BACKEND_EXIT_CODE" -eq 124 ]; then
+        log "$name: killed by watchdog after ${TURN_TIMEOUT_SEC}s"
+        push_activity "timeout" "killed after ${TURN_TIMEOUT_SEC}s"
+    fi
+}
+
 # Run claude with a prompt file. Optional: --resume <session_id>
-# Sets CLAUDE_JSON to the raw JSON output.
+# Sets BACKEND_SESSION_ID, BACKEND_RESULT, BACKEND_EXIT_CODE.
 run_claude() {
     local prompt_file="$1"
     local resume_sid="${2:-}"
     local resume_args=""
     [ -n "$resume_sid" ] && resume_args="--resume $resume_sid"
-    local _err_file
-    _err_file=$(mktemp /tmp/claude-err-XXXXXX)
-    CLAUDE_JSON=$(cd "$PROJECT_DIR" && read_prompt "$prompt_file" | claude -p \
-        $resume_args \
-        --output-format json \
-        --dangerously-skip-permissions \
-        --max-turns "$MAX_TURNS" \
-        9>&- 2>"$_err_file") || true
-    local _stderr
-    _stderr=$(cat "$_err_file" 2>/dev/null)
-    rm -f "$_err_file"
-    if [ -n "$_stderr" ]; then
-        log "claude stderr: $_stderr"
-        push_activity "error" "$(echo "$_stderr" | head -1 | cut -c1-200)"
-    fi
+    local _err_file _out_file _prompt_file
+    _err_file=$(mktemp /tmp/backend-err-XXXXXX)
+    _out_file=$(mktemp /tmp/backend-out-XXXXXX)
+    _prompt_file=$(mktemp /tmp/backend-prompt-XXXXXX)
+
+    cd "$PROJECT_DIR"
+    read_prompt "$prompt_file" > "$_prompt_file"
+    run_with_watchdog bash -c "
+        cat '$_prompt_file' | claude -p \
+            $resume_args \
+            --output-format json \
+            --dangerously-skip-permissions \
+            --max-turns '$MAX_TURNS' \
+            9>&-
+    " > "$_out_file" 2>"$_err_file"
+
+    BACKEND_JSON=$(cat "$_out_file" 2>/dev/null)
+    BACKEND_SESSION_ID=$(echo "$BACKEND_JSON" | jq -r '.session_id // empty' 2>/dev/null)
+    BACKEND_RESULT=$(echo "$BACKEND_JSON" | jq -r '.result // empty' 2>/dev/null)
+    handle_backend_result "claude" "$_err_file" "$_out_file" "$_prompt_file"
+}
+
+# Run codex with a prompt file. Optional: resume <session_id>
+# Sets BACKEND_SESSION_ID, BACKEND_RESULT, BACKEND_EXIT_CODE.
+run_codex() {
+    local prompt_file="$1"
+    local resume_sid="${2:-}"
+    local _err_file _out_file _prompt_file _jsonl_file
+    _err_file=$(mktemp /tmp/backend-err-XXXXXX)
+    _out_file=$(mktemp /tmp/backend-out-XXXXXX)
+    _prompt_file=$(mktemp /tmp/backend-prompt-XXXXXX)
+    _jsonl_file=$(mktemp /tmp/backend-jsonl-XXXXXX)
+
+    cd "$PROJECT_DIR"
+    read_prompt "$prompt_file" > "$_prompt_file"
+
+    local resume_args=""
+    [ -n "$resume_sid" ] && resume_args="resume $resume_sid"
+
+    # resume subcommand must come right after 'codex exec', before flags
+    run_with_watchdog bash -c "
+        cat '$_prompt_file' | codex exec $resume_args \
+            ${CODEX_MODEL:+-m '$CODEX_MODEL'} \
+            -C '$PROJECT_DIR' \
+            --json \
+            --dangerously-bypass-approvals-and-sandbox \
+            --skip-git-repo-check \
+            -o '$_out_file' \
+            -
+    " > "$_jsonl_file" 2>"$_err_file"
+
+    BACKEND_JSON=""
+    BACKEND_SESSION_ID=$(jq -r 'select(.type=="thread.started") | .thread_id // empty' "$_jsonl_file" 2>/dev/null | head -1)
+    BACKEND_RESULT=$(cat "$_out_file" 2>/dev/null)
+    handle_backend_result "codex" "$_err_file" "$_out_file" "$_prompt_file" "$_jsonl_file"
+}
+
+# Dispatch to the configured backend
+run_backend() {
+    case "$DAEMON_BACKEND" in
+        claude) run_claude "$@" ;;
+        codex)  run_codex "$@" ;;
+        *)
+            log "Unknown backend: $DAEMON_BACKEND"
+            BACKEND_EXIT_CODE=1
+            BACKEND_SESSION_ID=""
+            BACKEND_RESULT=""
+            ;;
+    esac
 }
 
 # Fetch per-agent config from server before first session
@@ -612,7 +729,7 @@ else
     log "Using defaults: wake_channels=${WAKE_CHANNELS:-<mentions-only>}, poll_interval=$COMMS_POLL_INTERVAL"
 fi
 
-log "fagents daemon starting (agent: $AGENT, PID: $$, interval: ${INTERVAL}s, max-turns: $MAX_TURNS, channels: $CHANNELS)"
+log "fagents daemon starting (agent: $AGENT, backend: $DAEMON_BACKEND, PID: $$, interval: ${INTERVAL}s, max-turns: $MAX_TURNS, channels: $CHANNELS)"
 
 # First iteration — resume existing session if available, else create new
 check_pause
@@ -623,24 +740,23 @@ fi
 
 if [ -n "$OLD_SID" ]; then
     log "Resuming session: $OLD_SID"
-    run_claude "$PROMPT_REMBEAT" "$OLD_SID"
-    SID=$(echo "$CLAUDE_JSON" | jq -r '.session_id // empty' 2>/dev/null)
+    run_backend "$PROMPT_REMBEAT" "$OLD_SID"
+    SID="$BACKEND_SESSION_ID"
     if [ -z "$SID" ]; then
         log "Resume failed, creating new session..."
-        run_claude "$PROMPT_REMBEAT"
-        SID=$(echo "$CLAUDE_JSON" | jq -r '.session_id')
+        run_backend "$PROMPT_REMBEAT"
+        SID="${BACKEND_SESSION_ID:-}"
     fi
 else
     log "Creating session..."
-    run_claude "$PROMPT_REMBEAT"
-    SID=$(echo "$CLAUDE_JSON" | jq -r '.session_id')
+    run_backend "$PROMPT_REMBEAT"
+    SID="${BACKEND_SESSION_ID:-}"
 fi
-INIT_JSON="$CLAUDE_JSON"
 
 echo "$SID" > "$SESSION_FILE"
 log "Session: $SID"
 
-RESULT=$(echo "$INIT_JSON" | jq -r '.result // ""' 2>/dev/null)
+RESULT="$BACKEND_RESULT"
 [ -n "$RESULT" ] && log "Result: $RESULT"
 
 # Awareness: collect state, push health, log summary
@@ -722,13 +838,15 @@ while true; do
     fi
     check_pause
 
-    run_claude "$PROMPT_FILE" "$SID"
+    run_backend "$PROMPT_FILE" "$SID"
+    SID="${BACKEND_SESSION_ID:-$SID}"
+    echo "$SID" > "$SESSION_FILE"
 
     # Archive processed inbox messages
     archive_inbox
 
     # Extract result text for daemon log
-    RESULT=$(echo "$CLAUDE_JSON" | jq -r '.result // ""' 2>/dev/null)
+    RESULT="$BACKEND_RESULT"
     [ -n "$RESULT" ] && log "Result: $RESULT"
 
     # Check comms connectivity each cycle
