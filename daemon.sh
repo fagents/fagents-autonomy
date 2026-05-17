@@ -534,11 +534,13 @@ NOSTR_SPOOL_DIR="$NOSTR_AGENT_HOME/nostr-spool"
 NOSTR_OUTBOX_DIR="$NOSTR_AGENT_HOME/nostr-outbox"
 NOSTR_PID_FILE="$NOSTR_AGENT_HOME/.nostr-serve.pid"
 collect_nostr() {
-    # Require env file with NOSTR_NSEC line. An installer that failed mid-way
-    # may have left a relays-only nostr.env behind; treating that as
-    # "configured" sends us into a not-logged-in loop. Fail closed instead.
+    # Env file presence = "this agent opted into Nostr". The CLI itself
+    # validates NSEC at startup and exits if missing; the daemon doesn't
+    # try to read the file's contents because it's chmod 0600 owned by the
+    # fagents user and the daemon runs as the agent's Unix user (no read
+    # perms). Installer's failure-path rm of partial envs is the primary
+    # defense against relays-only "configured" state.
     [ -f "$NOSTR_ENV_FILE" ] || return 1
-    grep -q '^NOSTR_NSEC=' "$NOSTR_ENV_FILE" 2>/dev/null || return 1
     command -v node &>/dev/null || return 1
     [ -f "$NOSTR_CLI" ] || return 1
 
@@ -901,11 +903,12 @@ ensure_whatsapp_serve || true
 # NOSTR_DISABLE=1 also short-circuits (operator override).
 ensure_nostr_serve() {
     [ -n "${NOSTR_DISABLE:-}" ] && return 0
-    # Require env file with NOSTR_NSEC line. A relays-only env (incomplete
-    # install) would otherwise spawn `nostr.mjs serve` -> not-logged-in -> exit,
-    # the daemon retries next loop -> hot-loop. Fail closed.
+    # Env file presence = agent opted into Nostr. Same constraint as
+    # collect_nostr: daemon runs as the agent's Unix user and cannot read
+    # the 0600 fagents-owned env to grep for NOSTR_NSEC. Installer cleanup
+    # on partial installs is the primary defense (matches WhatsApp's
+    # ensure_whatsapp_serve which also only checks CLI presence).
     [ -f "$NOSTR_ENV_FILE" ] || return 0
-    grep -q '^NOSTR_NSEC=' "$NOSTR_ENV_FILE" 2>/dev/null || return 0
     command -v node &>/dev/null || return 1
     [ -f "$NOSTR_CLI" ] || return 1
     if [ -z "$NOSTR_SERVE_PID" ] || ! kill -0 "$NOSTR_SERVE_PID" 2>/dev/null; then

@@ -1000,24 +1000,11 @@ assert_eq "0" "$RC" "returns 0 silently when nostr.env absent (unconfigured)"
 [ -z "$NOSTR_SERVE_PID" ] && pass "no serve PID set when nostr.env absent" || fail "no serve PID set when nostr.env absent (got '$NOSTR_SERVE_PID')"
 NOSTR_ENV_FILE="$SAVE_NOSTR_ENV2"
 
-# Regression for r11 QUALITY_REVIEW: env file exists but has no NOSTR_NSEC
-# (partial install). Guard must treat as unconfigured -- fail closed, no
-# serve spawned, no hot-loop retrying not-logged-in.
-FAKE_PARTIAL_ENV=$(mktemp)
-{
-    echo "NOSTR_RELAYS=wss://relay.damus.io"
-    echo "NOSTR_ALLOWED_NPUBS="
-} > "$FAKE_PARTIAL_ENV"
-NOSTR_ENV_FILE="$FAKE_PARTIAL_ENV"
-NOSTR_SERVE_PID=""
-ensure_nostr_serve; RC=$?
-assert_eq "0" "$RC" "returns 0 when env has no NOSTR_NSEC (partial install)"
-[ -z "$NOSTR_SERVE_PID" ] && pass "no serve PID set on relays-only env (no NSEC)" || fail "no serve PID set on relays-only env (got '$NOSTR_SERVE_PID')"
-clear_inbox
-collect_nostr; RC=$?
-assert_eq "1" "$RC" "collect_nostr returns 1 when NOSTR_NSEC missing"
-rm -f "$FAKE_PARTIAL_ENV"
-NOSTR_ENV_FILE="$SAVE_NOSTR_ENV2"
+# Note: the daemon does NOT grep nostr.env for NOSTR_NSEC anymore -- the
+# env file is chmod 0600 owned by fagents, but the daemon runs as the
+# agent's Unix user and can't read it. The CLI validates NSEC at startup
+# and exits if missing. The installer's failure-path rm of partial envs
+# is the primary defense (test in install-team grep regressions below).
 
 # No nostr.mjs CLI present (but env exists) -> returns 1 (no serve started)
 SAVE_NOSTR_CLI2="$NOSTR_CLI"
