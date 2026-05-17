@@ -222,10 +222,12 @@ echo $$ > "$PID_FILE"
 rm -f "$STATE_DIR/daemon.stopped" "$STATE_DIR/daemon.alerted"
 STREAM_PID=""
 WHATSAPP_SERVE_PID=""
+NOSTR_SERVE_PID=""
 cleanup() {
     rm -f "$PID_FILE"
     [ -n "$STREAM_PID" ] && kill "$STREAM_PID" 2>/dev/null || true
     [ -n "$WHATSAPP_SERVE_PID" ] && kill "$WHATSAPP_SERVE_PID" 2>/dev/null || true
+    [ -n "$NOSTR_SERVE_PID" ] && kill "$NOSTR_SERVE_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -508,6 +510,87 @@ collect_whatsapp() {
     [ "$wrote" = "1" ] && return 0 || return 1
 }
 
+# Collect new Nostr DMs into inbox/.
+# Calls nostr.mjs poll via sudo, drains spool files into .queue/inbox/.
+# Writes RAW body (not pre-wrapped). read_inbox() is the sole <untrusted> wrapper.
+# Returns 1 (no-op) when the current agent has no nostr.env -- avoids spamming
+# `not-logged-in` errors on installs where Nostr was not enabled.
+# Platform-aware paths. start-agent.sh exports FAGENTS_CLI_DIR and
+# FAGENTS_AGENTS_DIR derived from INFRA_HOME (Linux /home/fagents vs macOS
+# /Users/fagents). Fall back to the Linux default if unset.
+NOSTR_CLI="${FAGENTS_CLI_DIR:-/home/fagents/workspace/fagents-cli}/nostr.mjs"
+# Derive paths from the Unix user the daemon runs as ($(whoami) returns the
+# lowercase user slug like "comms"). Do NOT use $AGENT here -- it carries the
+# display name ("Comms") set by start-agent.sh, and the installer writes the
+# env files under the lowercase user slug.
+#
+# We derive ALL paths (env / spool / outbox / pid) here in the daemon and
+# pass them explicitly to nostr.mjs via flags. Sudo strips FAGENTS_AGENTS_DIR
+# by default (env_reset), so the child process can't read the override
+# variable directly. Explicit flags cross the sudo boundary cleanly.
+NOSTR_AGENT_HOME="${FAGENTS_AGENTS_DIR:-/home/fagents/.agents}/$(whoami)"
+NOSTR_ENV_FILE="$NOSTR_AGENT_HOME/nostr.env"
+NOSTR_SPOOL_DIR="$NOSTR_AGENT_HOME/nostr-spool"
+NOSTR_OUTBOX_DIR="$NOSTR_AGENT_HOME/nostr-outbox"
+NOSTR_PID_FILE="$NOSTR_AGENT_HOME/.nostr-serve.pid"
+collect_nostr() {
+    # Require env file with NOSTR_NSEC line. An installer that failed mid-way
+    # may have left a relays-only nostr.env behind; treating that as
+    # "configured" sends us into a not-logged-in loop. Fail closed instead.
+    [ -f "$NOSTR_ENV_FILE" ] || return 1
+    grep -q '^NOSTR_NSEC=' "$NOSTR_ENV_FILE" 2>/dev/null || return 1
+    command -v node &>/dev/null || return 1
+    [ -f "$NOSTR_CLI" ] || return 1
+
+    local resp
+    # Pass explicit paths via flags -- sudo strips FAGENTS_AGENTS_DIR so the
+    # child cannot derive them from env on macOS.
+    resp=$(sudo -u fagents "$NOSTR_CLI" \
+        --env-file "$NOSTR_ENV_FILE" \
+        --spool-dir "$NOSTR_SPOOL_DIR" \
+        --outbox-dir "$NOSTR_OUTBOX_DIR" \
+        poll 2>/dev/null) || return 1
+    [ -n "$resp" ] || return 1
+
+    local wrote=0
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local from_npub from_hex body wrap_id rumor_id msg_ts
+        from_npub=$(echo "$line" | jq -r '.from_npub // empty') || continue
+        from_hex=$(echo "$line"  | jq -r '.from_hex // empty')  || continue
+        body=$(echo "$line"      | jq -r '.body // ""')
+        wrap_id=$(echo "$line"   | jq -r '.wrap_event_id // empty') || continue
+        rumor_id=$(echo "$line"  | jq -r '.rumor_id // empty')
+        msg_ts=$(echo "$line"    | jq -r '.ts // ""')
+        [ -z "$from_npub" ] && continue
+        [ -z "$wrap_id" ] && continue
+        [ "$body" = "null" ] && body=""
+
+        local ts
+        [[ -n "$msg_ts" && "$msg_ts" != "null" ]] && ts="$msg_ts" || ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+        local short_npub channel
+        short_npub="${from_npub:0:16}"
+        channel="nostr-${short_npub}"
+
+        local entry
+        entry=$(jq -nc \
+            --arg ts "$ts" \
+            --arg id "nostr-${wrap_id}" \
+            --arg channel "$channel" \
+            --arg from "$from_npub" \
+            --arg body "$body" \
+            --arg from_hex "$from_hex" \
+            --arg wrap_id "$wrap_id" \
+            --arg rumor_id "$rumor_id" \
+            '{ts:$ts, id:$id, source:"nostr", channel:$channel, from:$from, body:$body, from_hex:$from_hex, wrap_event_id:$wrap_id, rumor_id:$rumor_id, trusted:false}')
+        echo "$entry" > "$INBOX_DIR/nostr-${wrap_id}.jsonl"
+        wrote=1
+    done <<< "$resp"
+
+    [ "$wrote" = "1" ] && return 0 || return 1
+}
+
 # Read all inbox/ files, format as text block for prompt injection.
 # Sets INBOX_BLOCK (text) and INBOX_COUNT (int).
 INBOX_BLOCK=""
@@ -551,9 +634,11 @@ archive_inbox() {
 LAST_EMAIL_CHECK=0
 LAST_TELEGRAM_CHECK=0
 LAST_WHATSAPP_CHECK=0
+LAST_NOSTR_CHECK=0
 EMAIL_CADENCE=60
 TELEGRAM_CADENCE=5
 WHATSAPP_CADENCE=3
+NOSTR_CADENCE="${NOSTR_CADENCE:-3}"
 
 collect_and_wait() {
     local deadline=$((SECONDS + INTERVAL))
@@ -581,6 +666,10 @@ collect_and_wait() {
         if [ $((now - LAST_WHATSAPP_CHECK)) -ge $WHATSAPP_CADENCE ]; then
             collect_whatsapp || true
             LAST_WHATSAPP_CHECK=$now
+        fi
+        if [ $((now - LAST_NOSTR_CHECK)) -ge "$NOSTR_CADENCE" ]; then
+            collect_nostr || true
+            LAST_NOSTR_CHECK=$now
         fi
 
         # Check inbox — any files means wake
@@ -806,6 +895,32 @@ ensure_whatsapp_serve() {
 }
 ensure_whatsapp_serve || true
 
+# Start Nostr serve only when the current agent has a nostr.env. Agents that
+# weren't configured for Nostr return 0 here (silent no-op), preventing the
+# `not-logged-in` exit loop the prior version caused on default installs.
+# NOSTR_DISABLE=1 also short-circuits (operator override).
+ensure_nostr_serve() {
+    [ -n "${NOSTR_DISABLE:-}" ] && return 0
+    # Require env file with NOSTR_NSEC line. A relays-only env (incomplete
+    # install) would otherwise spawn `nostr.mjs serve` -> not-logged-in -> exit,
+    # the daemon retries next loop -> hot-loop. Fail closed.
+    [ -f "$NOSTR_ENV_FILE" ] || return 0
+    grep -q '^NOSTR_NSEC=' "$NOSTR_ENV_FILE" 2>/dev/null || return 0
+    command -v node &>/dev/null || return 1
+    [ -f "$NOSTR_CLI" ] || return 1
+    if [ -z "$NOSTR_SERVE_PID" ] || ! kill -0 "$NOSTR_SERVE_PID" 2>/dev/null; then
+        sudo -u fagents "$NOSTR_CLI" \
+            --env-file "$NOSTR_ENV_FILE" \
+            --spool-dir "$NOSTR_SPOOL_DIR" \
+            --outbox-dir "$NOSTR_OUTBOX_DIR" \
+            --pid-file "$NOSTR_PID_FILE" \
+            serve 9>&- </dev/null >> "$DAEMON_LOG" 2>&1 &
+        NOSTR_SERVE_PID=$!
+        log "Nostr serve started (PID: $NOSTR_SERVE_PID)"
+    fi
+}
+ensure_nostr_serve || true
+
 # Startup comms check
 check_comms || true
 
@@ -855,6 +970,7 @@ while true; do
     # Restart background processes if they died
     ensure_activity_stream
     ensure_whatsapp_serve || true
+    ensure_nostr_serve || true
 
     # Awareness: collect state, push health, log summary
     WAKE_TYPE="rembeat"

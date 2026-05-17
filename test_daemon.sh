@@ -221,9 +221,19 @@ print('TELEGRAM_CLI="/nonexistent/telegram.sh"')
 print('LAST_WHATSAPP_CHECK=0')
 print('WHATSAPP_CADENCE=3')
 print('WHATSAPP_CLI="/nonexistent/whatsapp.mjs"')
+print('LAST_NOSTR_CHECK=0')
+print('NOSTR_CADENCE=3')
+print('NOSTR_CLI="/nonexistent/nostr.mjs"')
+print('NOSTR_SERVE_PID=""')
+print('NOSTR_AGENT_HOME="/nonexistent/.agents/test"')
+print('NOSTR_ENV_FILE="$NOSTR_AGENT_HOME/nostr.env"')
+print('NOSTR_SPOOL_DIR="$NOSTR_AGENT_HOME/nostr-spool"')
+print('NOSTR_OUTBOX_DIR="$NOSTR_AGENT_HOME/nostr-outbox"')
+print('NOSTR_PID_FILE="$NOSTR_AGENT_HOME/.nostr-serve.pid"')
+print('AGENT="test"')
 print()
 
-funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'collect_whatsapp', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms', 'push_activity', 'check_pause', 'run_with_watchdog', 'handle_backend_result', 'run_claude', 'run_codex', 'run_backend']
+funcs = ['refresh_channels', 'fetch_config', 'collect_comms', 'collect_email', 'collect_telegram', 'collect_whatsapp', 'collect_nostr', 'ensure_nostr_serve', 'read_inbox', 'archive_inbox', 'collect_and_wait', 'read_prompt', 'check_comms', 'push_activity', 'check_pause', 'run_with_watchdog', 'handle_backend_result', 'run_claude', 'run_codex', 'run_backend']
 for name in funcs:
     pattern = rf'^{name}\(\) \{{.*?^\}}'
     match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
@@ -778,6 +788,243 @@ unset -f sudo
 
 rm -f "$FAKE_STT_CLI" "$FAKE_WA_CLI"
 WHATSAPP_CLI="$SAVE_WHATSAPP_CLI"
+
+echo ""
+
+# ── collect_nostr tests ──
+
+echo "collect_nostr():"
+
+# Test: returns 1 when CLI not found
+SAVE_NOSTR_CLI="$NOSTR_CLI"
+NOSTR_CLI="/nonexistent/nostr.mjs"
+SAVE_NOSTR_ENV_FILE="$NOSTR_ENV_FILE"
+FAKE_NOSTR_ENV=$(mktemp)
+# Populate with a fake NOSTR_NSEC so the new (r12) "must have NSEC" guard
+# passes; the test wants to exercise CLI-not-found, not the NSEC-missing path
+# (which is exercised separately below).
+echo "NOSTR_NSEC=nsec1faketestkey" > "$FAKE_NOSTR_ENV"
+NOSTR_ENV_FILE="$FAKE_NOSTR_ENV"
+clear_inbox
+collect_nostr; RC=$?
+assert_eq "1" "$RC" "returns 1 when CLI not found"
+
+# Test: returns 1 when nostr.env is absent (unconfigured-agent guard)
+NOSTR_ENV_FILE="/nonexistent/agents/test/nostr.env"
+clear_inbox
+collect_nostr; RC=$?
+assert_eq "1" "$RC" "returns 1 when nostr.env is absent (unconfigured agent)"
+NOSTR_ENV_FILE="$FAKE_NOSTR_ENV"
+
+# Create a fake CLI for remaining tests
+FAKE_NOSTR_CLI=$(mktemp)
+echo '#!/bin/bash' > "$FAKE_NOSTR_CLI"
+echo 'exit 0' >> "$FAKE_NOSTR_CLI"
+chmod +x "$FAKE_NOSTR_CLI"
+NOSTR_CLI="$FAKE_NOSTR_CLI"
+
+# Test: returns 1 when poll returns no messages
+sudo() { return 1; }
+clear_inbox
+collect_nostr; RC=$?
+assert_eq "1" "$RC" "returns 1 when poll returns no messages"
+unset -f sudo
+
+# Test: writes .jsonl when poll returns a message (raw body, no <untrusted>)
+sudo() {
+    echo '{"ts":"2026-05-17T10:00:00.000Z","from_npub":"npub1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","from_hex":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","body":"hello from nostr","wrap_event_id":"deadbeef","rumor_id":"feedface"}'
+}
+clear_inbox
+collect_nostr; RC=$?
+assert_eq "0" "$RC" "returns 0 when nostr msg found"
+assert_eq "1" "$(find "$INBOX_DIR" -name 'nostr-*.jsonl' | wc -l | tr -d ' ')" "writes 1 nostr .jsonl"
+unset -f sudo
+
+# Inbox entry shape
+ENTRY=$(cat "$INBOX_DIR"/nostr-deadbeef.jsonl 2>/dev/null)
+assert_contains "$ENTRY" '"source":"nostr"' "nostr entry has source"
+assert_contains "$ENTRY" '"trusted":false' "nostr entry is untrusted"
+assert_contains "$ENTRY" '"from":"npub1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "entry has from npub"
+assert_contains "$ENTRY" '"body":"hello from nostr"' "entry body is RAW (no <untrusted>)"
+# Anti-double-wrap: body must NOT be pre-wrapped (codex r2 P2 contract)
+if echo "$ENTRY" | grep -q '"body":"<untrusted>'; then
+    fail "nostr entry body must NOT be pre-wrapped in <untrusted> (read_inbox handles it)"
+else
+    pass "nostr entry body is NOT pre-wrapped in <untrusted>"
+fi
+assert_contains "$ENTRY" '"wrap_event_id":"deadbeef"' "entry has wrap_event_id"
+assert_contains "$ENTRY" '"rumor_id":"feedface"' "entry has rumor_id"
+
+# Multiple messages
+sudo() {
+    echo '{"ts":"2026-05-17T10:00:01Z","from_npub":"npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","from_hex":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","body":"one","wrap_event_id":"wrap1","rumor_id":"r1"}'
+    echo '{"ts":"2026-05-17T10:00:02Z","from_npub":"npub1yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy","from_hex":"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy","body":"two","wrap_event_id":"wrap2","rumor_id":"r2"}'
+}
+clear_inbox
+collect_nostr; RC=$?
+assert_eq "0" "$RC" "returns 0 for multiple nostr msgs"
+assert_eq "2" "$(find "$INBOX_DIR" -name 'nostr-*.jsonl' | wc -l | tr -d ' ')" "writes 2 nostr .jsonl files"
+unset -f sudo
+
+rm -f "$FAKE_NOSTR_CLI"
+NOSTR_CLI="$SAVE_NOSTR_CLI"
+
+echo ""
+
+# ── ensure_nostr_serve test (set -u + NOSTR_DISABLE) ──
+
+echo "ensure_nostr_serve():"
+
+# Regression: NOSTR_CADENCE / LAST_NOSTR_CHECK must be defined under set -u
+# (otherwise daemon would crash with unbound-variable at first cadence check).
+assert_eq "0" "$LAST_NOSTR_CHECK" "LAST_NOSTR_CHECK is initialized to 0"
+[ -n "$NOSTR_CADENCE" ] && pass "NOSTR_CADENCE is defined" || fail "NOSTR_CADENCE is defined"
+# Cadence arithmetic under set -u (mirrors what collect_and_wait does)
+( set -u; now=10; [ $((now - LAST_NOSTR_CHECK)) -ge "$NOSTR_CADENCE" ] && true || true ) && pass "cadence arithmetic survives set -u" || fail "cadence arithmetic survives set -u"
+
+# NOSTR_DISABLE=1 -> ensure_nostr_serve is a no-op
+NOSTR_DISABLE=1 ensure_nostr_serve; RC=$?
+assert_eq "0" "$RC" "NOSTR_DISABLE=1 returns 0 (no-op)"
+[ -z "$NOSTR_SERVE_PID" ] && pass "NOSTR_DISABLE keeps PID empty" || fail "NOSTR_DISABLE keeps PID empty (got '$NOSTR_SERVE_PID')"
+
+# Regression for r5 P1: NOSTR paths in daemon.sh must derive from the Unix
+# user slug (e.g. "comms"), NOT from $AGENT (display name like "Comms").
+# After r7 refactor, the derivation lives on the NOSTR_AGENT_HOME line.
+NOSTR_HOME_LINE=$(grep '^NOSTR_AGENT_HOME=' "$SCRIPT_DIR/daemon.sh")
+if echo "$NOSTR_HOME_LINE" | grep -q 'whoami'; then
+    pass "NOSTR_AGENT_HOME derives from \$(whoami) not \$AGENT"
+else
+    fail "NOSTR_AGENT_HOME must use \$(whoami) (Unix user slug); current line: $NOSTR_HOME_LINE"
+fi
+
+# Regression for r6 P1: macOS / Linux paths must both work.
+if echo "$NOSTR_HOME_LINE" | grep -q 'FAGENTS_AGENTS_DIR'; then
+    pass "NOSTR_AGENT_HOME honors FAGENTS_AGENTS_DIR (platform-aware)"
+else
+    fail "NOSTR_AGENT_HOME must honor FAGENTS_AGENTS_DIR override; current line: $NOSTR_HOME_LINE"
+fi
+NOSTR_CLI_LINE=$(grep '^NOSTR_CLI=' "$SCRIPT_DIR/daemon.sh")
+if echo "$NOSTR_CLI_LINE" | grep -q 'FAGENTS_CLI_DIR'; then
+    pass "NOSTR_CLI honors FAGENTS_CLI_DIR (platform-aware)"
+else
+    fail "NOSTR_CLI must honor FAGENTS_CLI_DIR override; current line: $NOSTR_CLI_LINE"
+fi
+# Functional test: with FAGENTS_AGENTS_DIR + FAGENTS_CLI_DIR set, the daemon
+# resolves the same path the installer wrote.
+DAEMON_PATH="$SCRIPT_DIR/daemon.sh"
+FUNC_TEST_RC=0
+FAGENTS_AGENTS_DIR=/tmp/fake_agents_dir \
+FAGENTS_CLI_DIR=/tmp/fake_cli_dir \
+bash -c "
+    eval \"\$(grep '^NOSTR_AGENT_HOME=\\|^NOSTR_ENV_FILE=\\|^NOSTR_CLI=' '$DAEMON_PATH')\"
+    [[ \"\$NOSTR_ENV_FILE\" == /tmp/fake_agents_dir/*/nostr.env ]] || exit 1
+    [[ \"\$NOSTR_CLI\" == /tmp/fake_cli_dir/nostr.mjs ]] || exit 1
+" || FUNC_TEST_RC=$?
+if [ "$FUNC_TEST_RC" -eq 0 ]; then
+    pass "env-overridden paths resolve to FAGENTS_AGENTS_DIR/CLI_DIR"
+else
+    fail "env-overridden paths must resolve to FAGENTS_AGENTS_DIR/CLI_DIR (rc=$FUNC_TEST_RC)"
+fi
+
+# Regression for r9 P2: installer Nostr setup must check for the SPECIFIC
+# Nostr packages (nostr-tools, ws), not just node_modules/. Existing WhatsApp
+# install would have node_modules/ but no nostr-tools, leading to false
+# success. Grep both team installers.
+for _inst in "$SCRIPT_DIR/../fagents/install-team.sh" "$SCRIPT_DIR/../fagents/install-team-macos.sh"; do
+    if [ -f "$_inst" ]; then
+        _inst_name=$(basename "$_inst")
+        BLOCK=$(awk '/Step 5f: Nostr DM setup/,/log_warn.*INCOMPLETE|log_ok.*Nostr DMs configured/' "$_inst")
+        # Nostr setup must check for nostr-tools/package.json specifically
+        if echo "$BLOCK" | grep -q 'node_modules/nostr-tools/package.json'; then
+            pass "$_inst_name: Nostr install checks node_modules/nostr-tools, not just node_modules/"
+        else
+            fail "$_inst_name: Nostr setup must check for node_modules/nostr-tools/package.json"
+        fi
+        # log_ok must be gated by nostr_setup_failed
+        if echo "$BLOCK" | grep -q 'nostr_setup_failed'; then
+            pass "$_inst_name: Nostr log_ok gated by nostr_setup_failed flag"
+        else
+            fail "$_inst_name: Nostr setup must track failures via nostr_setup_failed"
+        fi
+        # Pre-flight: must require nostr.mjs presence, not just package.json
+        if echo "$BLOCK" | grep -q '!.*-f.*"\$CLI_DIR/nostr.mjs"'; then
+            pass "$_inst_name: Nostr setup pre-flight requires nostr.mjs"
+        else
+            fail "$_inst_name: Nostr setup must check that \$CLI_DIR/nostr.mjs exists before attempting install/login"
+        fi
+        # Post-install: must verify deps are actually present after npm
+        # (npm can exit 0 without installing if package.json is stale).
+        # Look for two separate dep-check sequences in the block (pre + post npm).
+        DEP_CHECKS=$(echo "$BLOCK" | grep -c 'node_modules/nostr-tools/package.json')
+        if [ "$DEP_CHECKS" -ge 2 ]; then
+            pass "$_inst_name: Nostr deps verified BOTH before and after npm install"
+        else
+            fail "$_inst_name: must verify node_modules/nostr-tools after npm install (count=$DEP_CHECKS)"
+        fi
+        # Failure path must remove partial nostr.env so the daemon's
+        # grep-for-NSEC guard sees a clean "not configured" state.
+        if echo "$BLOCK" | grep -q 'rm -f "\$agent_dir/nostr.env"'; then
+            pass "$_inst_name: failure path removes partial nostr.env"
+        else
+            fail "$_inst_name: failure path must rm -f \$agent_dir/nostr.env"
+        fi
+    fi
+done
+
+# Regression for r7 P1: sudo strips FAGENTS_AGENTS_DIR, so daemon MUST pass
+# explicit --env-file / --spool-dir / --outbox-dir (and --pid-file for serve)
+# to the child nostr.mjs process. Grep both call sites.
+COLLECT_BLOCK=$(awk '/^collect_nostr\(\)/,/^}/' "$DAEMON_PATH")
+if echo "$COLLECT_BLOCK" | grep -q -- '--env-file "\$NOSTR_ENV_FILE"' && \
+   echo "$COLLECT_BLOCK" | grep -q -- '--spool-dir "\$NOSTR_SPOOL_DIR"'; then
+    pass "collect_nostr passes --env-file + --spool-dir to sudo'd child"
+else
+    fail "collect_nostr must pass --env-file + --spool-dir (sudo strips env)"
+fi
+SERVE_BLOCK=$(awk '/^ensure_nostr_serve\(\)/,/^}/' "$DAEMON_PATH")
+if echo "$SERVE_BLOCK" | grep -q -- '--env-file "\$NOSTR_ENV_FILE"' && \
+   echo "$SERVE_BLOCK" | grep -q -- '--pid-file "\$NOSTR_PID_FILE"'; then
+    pass "ensure_nostr_serve passes --env-file + --pid-file to sudo'd child"
+else
+    fail "ensure_nostr_serve must pass --env-file + --pid-file (sudo strips env)"
+fi
+
+# nostr.env absent -> serve does NOT start, returns 0 (unconfigured agent guard).
+# Regression for the r4 P1 finding where every agent on the updated daemon
+# would spin up serve and immediately exit with not-logged-in.
+SAVE_NOSTR_ENV2="$NOSTR_ENV_FILE"
+NOSTR_ENV_FILE="/nonexistent/.agents/test/nostr.env"
+NOSTR_SERVE_PID=""
+ensure_nostr_serve; RC=$?
+assert_eq "0" "$RC" "returns 0 silently when nostr.env absent (unconfigured)"
+[ -z "$NOSTR_SERVE_PID" ] && pass "no serve PID set when nostr.env absent" || fail "no serve PID set when nostr.env absent (got '$NOSTR_SERVE_PID')"
+NOSTR_ENV_FILE="$SAVE_NOSTR_ENV2"
+
+# Regression for r11 QUALITY_REVIEW: env file exists but has no NOSTR_NSEC
+# (partial install). Guard must treat as unconfigured -- fail closed, no
+# serve spawned, no hot-loop retrying not-logged-in.
+FAKE_PARTIAL_ENV=$(mktemp)
+{
+    echo "NOSTR_RELAYS=wss://relay.damus.io"
+    echo "NOSTR_ALLOWED_NPUBS="
+} > "$FAKE_PARTIAL_ENV"
+NOSTR_ENV_FILE="$FAKE_PARTIAL_ENV"
+NOSTR_SERVE_PID=""
+ensure_nostr_serve; RC=$?
+assert_eq "0" "$RC" "returns 0 when env has no NOSTR_NSEC (partial install)"
+[ -z "$NOSTR_SERVE_PID" ] && pass "no serve PID set on relays-only env (no NSEC)" || fail "no serve PID set on relays-only env (got '$NOSTR_SERVE_PID')"
+clear_inbox
+collect_nostr; RC=$?
+assert_eq "1" "$RC" "collect_nostr returns 1 when NOSTR_NSEC missing"
+rm -f "$FAKE_PARTIAL_ENV"
+NOSTR_ENV_FILE="$SAVE_NOSTR_ENV2"
+
+# No nostr.mjs CLI present (but env exists) -> returns 1 (no serve started)
+SAVE_NOSTR_CLI2="$NOSTR_CLI"
+NOSTR_CLI="/nonexistent/nostr.mjs"
+ensure_nostr_serve; RC=$?
+assert_eq "1" "$RC" "returns 1 when CLI absent (env present)"
+NOSTR_CLI="$SAVE_NOSTR_CLI2"
 
 echo ""
 
