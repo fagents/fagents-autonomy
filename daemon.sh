@@ -781,15 +781,20 @@ run_codex() {
     local resume_args=""
     [ -n "$resume_sid" ] && resume_args="resume $resume_sid"
 
-    # resume subcommand must come right after 'codex exec', before flags
+    # `codex exec resume` is a subcommand whose own [OPTIONS] is a STRICT
+    # SUBSET of `codex exec`'s -- it does not accept -C/--json/--dangerously-
+    # bypass-.../--skip-git-repo-check/-o. So flags must precede the resume
+    # subcommand and apply at the `exec` level; the resume word + sid go
+    # between the flags and the trailing `-` (stdin prompt marker).
     run_with_watchdog bash -c "
-        cat '$_prompt_file' | codex exec $resume_args \
+        cat '$_prompt_file' | codex exec \
             ${CODEX_MODEL:+-m '$CODEX_MODEL'} \
             -C '$PROJECT_DIR' \
             --json \
             --dangerously-bypass-approvals-and-sandbox \
             --skip-git-repo-check \
             -o '$_out_file' \
+            $resume_args \
             -
     " > "$_jsonl_file" 2>"$_err_file"
 
