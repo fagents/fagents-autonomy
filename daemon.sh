@@ -877,8 +877,14 @@ check_comms() {
     return 0
 }
 
-# Activity stream management
-ACTIVITY_STREAM="$SCRIPT_DIR/activity-stream.sh"
+# Activity stream management -- dispatch on backend.
+# Codex agents read codex's own session JSONL (~/.codex/sessions/...);
+# Claude agents read .introspection-logs. The two parsers diverge enough
+# that they live as sibling scripts rather than a dispatching parser.
+case "$DAEMON_BACKEND" in
+    codex)  ACTIVITY_STREAM="$SCRIPT_DIR/activity-stream-codex.sh" ;;
+    *)      ACTIVITY_STREAM="$SCRIPT_DIR/activity-stream.sh" ;;
+esac
 ensure_activity_stream() {
     if [ -x "$ACTIVITY_STREAM" ] && [ -n "$COMMS_URL" ] && [ -n "$COMMS_TOKEN" ]; then
         if [ -z "$STREAM_PID" ] || ! kill -0 "$STREAM_PID" 2>/dev/null; then

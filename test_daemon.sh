@@ -152,6 +152,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path.startswith('/api/agents/') and path.endswith('/health'):
             with open(os.path.join(DATA_DIR, 'last-health-post.json'), 'w') as f:
                 f.write(body)
+            with open(os.path.join(DATA_DIR, 'all-health-posts.jsonl'), 'a') as f:
+                f.write(body + '\n')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -159,6 +161,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path.startswith('/api/agents/') and path.endswith('/activity'):
             with open(os.path.join(DATA_DIR, 'last-activity-post.json'), 'w') as f:
                 f.write(body)
+            with open(os.path.join(DATA_DIR, 'all-activity-posts.jsonl'), 'a') as f:
+                f.write(body + '\n')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -2318,6 +2322,301 @@ OUTPUT=$(bash "$CRON" add test-bad "9 * *" "test" 2>&1)
 assert_contains "$OUTPUT" "5 cron fields" "add: rejects bad schedule"
 
 rm -rf "$CRON_TMP"
+
+echo ""
+
+# ── activity-stream-codex.sh tests ──
+
+echo "activity-stream-codex.sh:"
+
+CODEX_SCRIPT="$SCRIPT_DIR/activity-stream-codex.sh"
+
+if [ -f "$CODEX_SCRIPT" ]; then
+    pass "activity-stream-codex.sh: script exists"
+else
+    fail "activity-stream-codex.sh: script exists"
+fi
+
+bash -n "$CODEX_SCRIPT" 2>/dev/null
+assert_eq "0" "$?" "activity-stream-codex.sh: bash -n clean"
+
+# Source for unit tests of find_latest_codex_jsonl. The script's
+# BASH_SOURCE guard returns before any side effects (no tail, no exit).
+# shellcheck disable=SC1090
+source "$CODEX_SCRIPT"
+
+# Helper: missing root → rc=1, empty stdout. Real-world: codex agent
+# that hasn't run a single turn yet.
+_out=$(find_latest_codex_jsonl "/nonexistent-codex-root-xyz" 2>&1)
+_rc=$?
+assert_eq "1" "$_rc" "find_latest_codex_jsonl: missing root returns rc=1"
+assert_eq "" "$_out" "find_latest_codex_jsonl: missing root returns empty stdout"
+
+# Helper: path with space in it (the original xargs concern in r2). One
+# rollout file in a spaced parent should round-trip unmangled.
+SPACED_TMP=$(mktemp -d -t "codex test.XXXXXX")
+mkdir -p "$SPACED_TMP/sessions/2026/06/18"
+TARGET="$SPACED_TMP/sessions/2026/06/18/rollout-2026-06-18-aaa.jsonl"
+: > "$TARGET"
+_out=$(find_latest_codex_jsonl "$SPACED_TMP/sessions")
+assert_eq "$TARGET" "$_out" "find_latest_codex_jsonl: path with space returns correct file"
+
+# Helper: two rollout files, the one with newer mtime wins. This is the
+# regression `xargs -0 ls -t | head -1` could miss with enough files.
+SESS_TMP=$(mktemp -d)
+mkdir -p "$SESS_TMP/sessions/2026/06/18"
+OLD_FILE="$SESS_TMP/sessions/2026/06/18/rollout-old.jsonl"
+NEW_FILE="$SESS_TMP/sessions/2026/06/18/rollout-new.jsonl"
+: > "$OLD_FILE"; : > "$NEW_FILE"
+# Deterministic timestamps -- no race-prone sleep, works Linux + macOS.
+touch -t 202506180000 "$OLD_FILE"
+touch -t 202606180000 "$NEW_FILE"
+_out=$(find_latest_codex_jsonl "$SESS_TMP/sessions")
+assert_eq "$NEW_FILE" "$_out" "find_latest_codex_jsonl: newer mtime wins"
+
+rm -rf "$SPACED_TMP" "$SESS_TMP"
+
+# ── Codex JSONL parser tests ──
+#
+# Extract the marker-bracketed Python block from activity-stream-codex.sh,
+# feed it a handcrafted fixture covering every code path, and assert the
+# resulting POSTs against the mock's append-mode all-*-posts.jsonl files.
+# Tests the contract in isolation -- no live tail, no daemon.
+
+PARSER_PY=$(mktemp -t codex-parser.XXXXXX)
+awk '
+    /^# PARSE_CODEX_JSONL_BEGIN/ { in_block=1; next }
+    /^# PARSE_CODEX_JSONL_END/   { exit }
+    in_block { print }
+' "$CODEX_SCRIPT" > "$PARSER_PY"
+
+if [ -s "$PARSER_PY" ]; then
+    pass "activity-stream-codex.sh: PARSE_CODEX_JSONL block extractable"
+else
+    fail "activity-stream-codex.sh: PARSE_CODEX_JSONL block extractable"
+fi
+
+FIXTURE=$(mktemp -t codex-fixture.XXXXXX)
+# Fixture covers every code path including:
+#   - r3: non-exec_command function_call (update_plan) must be emitted.
+#   - SIMPLIFY: token_count.info as a truthy non-dict (string) must NOT
+#     crash the parser; agent_message.message as a list must NOT crash;
+#     context_pct must clamp to 100 when total_tokens > window;
+#     exec_command with no cmd field must fall through to the generic
+#     args summariser instead of pushing an empty detail.
+cat > "$FIXTURE" <<'JSONL'
+{"type":"session_meta","timestamp":"2026-06-18T00:00:00Z","payload":{"id":"s1","cli_version":"x"}}
+{"type":"event_msg","timestamp":"2026-06-18T00:00:01Z","payload":{"type":"token_count","info":null}}
+{"type":"event_msg","timestamp":"2026-06-18T00:00:02Z","payload":{"type":"token_count","info":"throttled"}}
+{"type":"response_item","timestamp":"2026-06-18T00:00:03Z","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"git log --oneline -20\",\"workdir\":\"/x\"}"}}
+{"type":"response_item","timestamp":"2026-06-18T00:00:04Z","payload":{"type":"function_call","name":"exec_command","arguments":"{\"workdir\":\"/x\"}"}}
+{"type":"response_item","timestamp":"2026-06-18T00:00:05Z","payload":{"type":"function_call_output","content":"output"}}
+{"type":"response_item","timestamp":"2026-06-18T00:00:06Z","payload":{"type":"reasoning","content":[{"text":"thinking"}]}}
+{"type":"response_item","timestamp":"2026-06-18T00:00:07Z","payload":{"type":"message","role":"assistant","content":[{"text":"intermediate"}]}}
+{"type":"response_item","timestamp":"2026-06-18T00:00:08Z","payload":{"type":"function_call","name":"update_plan","arguments":"{\"step\":\"refactor parser\"}"}}
+{"type":"event_msg","timestamp":"2026-06-18T00:00:09Z","payload":{"type":"agent_message","message":["non","string","content"]}}
+{"type":"event_msg","timestamp":"2026-06-18T00:00:10Z","payload":{"type":"agent_message","message":"Done."}}
+{"type":"event_msg","timestamp":"2026-06-18T00:00:11Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":1234},"model_context_window":128000}}}
+{"type":"event_msg","timestamp":"2026-06-18T00:00:12Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":256000},"model_context_window":128000}}}
+JSONL
+
+# Clean slate for the all-*-posts.jsonl append logs.
+rm -f "$MOCK_DIR/all-activity-posts.jsonl" "$MOCK_DIR/all-health-posts.jsonl"
+
+ACTIVITY_AGENT="TestAgent" \
+ACTIVITY_COMMS_URL="$COMMS_URL" \
+ACTIVITY_COMMS_TOKEN="$COMMS_TOKEN" \
+    python3 -u "$PARSER_PY" < "$FIXTURE"
+PARSER_RC=$?
+assert_eq "0" "$PARSER_RC" "parser: exits 0 on full fixture (null-info didn't crash)"
+
+# Mock writes are synchronous from urlopen's POV; tiny pause for the
+# append() to flush to disk on slower CI.
+sleep 0.4
+
+ACT_BODIES=$(cat "$MOCK_DIR/all-activity-posts.jsonl" 2>/dev/null || echo "")
+HLT_BODIES=$(cat "$MOCK_DIR/all-health-posts.jsonl" 2>/dev/null || echo "")
+
+# Activity push count: 3 tools (exec_command + exec_command-no-cmd +
+# update_plan) + 1 thought = 4 bodies. Adjusted from 3 to 4 in SIMPLIFY
+# when the no-cmd fall-through was added.
+ACT_COUNT=$(printf '%s\n' "$ACT_BODIES" | grep -c '"events"' || true)
+assert_eq "4" "$ACT_COUNT" "parser: pushes exactly 4 activity bodies (3 tools + thought)"
+
+assert_contains "$ACT_BODIES" '"type":"tool"'                "parser: tool event type"
+assert_contains "$ACT_BODIES" '"summary":"exec_command"'     "parser: exec_command tool emitted"
+assert_contains "$ACT_BODIES" '"detail":"git log --oneline -20"' "parser: exec_command detail = cmd"
+assert_contains "$ACT_BODIES" '"summary":"update_plan"'      "parser: non-exec_command tool emitted (update_plan)"
+assert_contains "$ACT_BODIES" 'refactor parser'              "parser: update_plan detail captured from arguments"
+# exec_command with no cmd field: detail should fall through to the
+# generic summariser instead of being empty. The literal '{"workdir":"/x"}'
+# gets JSON-escaped inside the outer body, so we grep for the keyword
+# `workdir` -- present means the fall-through worked, absent means the
+# detail was empty.
+assert_contains "$ACT_BODIES" 'workdir'                       "parser: exec_command without cmd falls through to generic args summary"
+assert_contains "$ACT_BODIES" '"type":"thought"'             "parser: thought event type"
+assert_contains "$ACT_BODIES" '"summary":"Done."'            "parser: thought summary = agent_message"
+
+# Defensive guards: parser must NOT push anything for the crash-trigger
+# events (token_count.info="throttled" and agent_message.message=[list]).
+# If the parser had crashed on either, ACT_COUNT or HLT_COUNT would be
+# short of the expected values above and these would fail loudly.
+if echo "$ACT_BODIES" | grep -qF 'non' && echo "$ACT_BODIES" | grep -qF 'string'; then
+    fail "parser: agent_message with list payload should not push activity"
+else
+    pass "parser: agent_message with non-string message skipped (no crash)"
+fi
+
+# Skip gates: each of the three intentionally-skipped event types must
+# NOT appear in the stream.
+if echo "$ACT_BODIES" | grep -qF '"function_call_output"'; then
+    fail "parser: function_call_output should not appear in activity stream"
+else
+    pass "parser: function_call_output not in activity stream"
+fi
+if echo "$ACT_BODIES" | grep -qF '"reasoning"'; then
+    fail "parser: reasoning should not appear in activity stream"
+else
+    pass "parser: reasoning not in activity stream"
+fi
+if echo "$ACT_BODIES" | grep -qF '"intermediate"'; then
+    fail "parser: response_item.message (assistant role) should not appear"
+else
+    pass "parser: response_item.message not in activity stream (dedupe ok)"
+fi
+
+# Health push count: 2 (null-info AND non-dict-info skipped, the two
+# valid token_counts pushed). Both bodies carry last_tool=update_plan
+# because the no-cmd exec_command was its predecessor and update_plan
+# was the latest function_call.
+HLT_COUNT=$(printf '%s\n' "$HLT_BODIES" | grep -c '"context_pct"' || true)
+assert_eq "2" "$HLT_COUNT" "parser: pushes exactly 2 health bodies (null-info AND non-dict-info gates held)"
+assert_contains "$HLT_BODIES" '"context_pct":0'              "parser: context_pct = 1234*100//128000 = 0 (no clamp needed)"
+assert_contains "$HLT_BODIES" '"context_pct":100'            "parser: context_pct clamped to 100 when total_tokens > model_context_window"
+assert_contains "$HLT_BODIES" '"last_tool":"update_plan"'    "parser: last_tool tracks LATEST function_call (update_plan, not exec_command)"
+
+rm -f "$PARSER_PY" "$FIXTURE"
+
+# ── Session-rotation loop structure ──
+#
+# Codex creates a NEW rollout-*.jsonl per `codex exec` invocation that
+# isn't a resume; after a daemon restart, the first turn writes a new
+# file and the streamer's tail on the prior rollout would go dark
+# forever. The fix is an outer loop in activity-stream-codex.sh that
+# re-resolves find_latest_codex_jsonl on a poll interval and restarts
+# the tail pipeline when the path changes.
+
+if grep -q '^tail_codex_sessions()' "$CODEX_SCRIPT"; then
+    pass "activity-stream-codex.sh: tail_codex_sessions() rotation loop defined"
+else
+    fail "activity-stream-codex.sh: tail_codex_sessions() rotation loop defined"
+fi
+if grep -E 'current=.*find_latest_codex_jsonl' "$CODEX_SCRIPT" >/dev/null \
+    && grep -E 'if \[ "\$current" != "\$jsonl" \]' "$CODEX_SCRIPT" >/dev/null; then
+    pass "activity-stream-codex.sh: rotation loop polls + compares latest path"
+else
+    fail "activity-stream-codex.sh: rotation loop polls + compares latest path"
+fi
+
+# r5 QUALITY_REVIEW finding: bare `tail | python &` makes $! the python
+# pid, so `kill $!` leaves the tail blocked on a dormant file (no writes
+# = no SIGPIPE = tail leaks forever). Fix is to wrap the pipeline in a
+# subshell so $! is the subshell pid with both children reachable, then
+# pkill -P before kill.
+if grep -E 'pkill[[:space:]]+-(TERM[[:space:]]+)?-P[[:space:]]+"\$pipeline_pid"' "$CODEX_SCRIPT" >/dev/null \
+    || grep -E 'pkill[[:space:]]+-TERM[[:space:]]+-P[[:space:]]+"\$pipeline_pid"' "$CODEX_SCRIPT" >/dev/null; then
+    pass "activity-stream-codex.sh: rotation cleanup uses pkill -P on subshell pid"
+else
+    fail "activity-stream-codex.sh: rotation cleanup uses pkill -P on subshell pid"
+fi
+
+# ── Live rotation cleanup test ──
+#
+# End-to-end: stand up a fake sessions tree, run tail_codex_sessions
+# in the background, trigger rotation by writing a newer rollout, and
+# verify the prior tail process is dead (not leaked) after the poll
+# cycle. This is what the static grep above is incomplete to prove.
+
+ROT_ROOT=$(mktemp -d)
+mkdir -p "$ROT_ROOT/sessions/2026/06/18"
+ROT_A="$ROT_ROOT/sessions/2026/06/18/rollout-rota-$$.jsonl"
+ROT_B="$ROT_ROOT/sessions/2026/06/18/rollout-rotb-$$.jsonl"
+: > "$ROT_A"
+touch -t 202506180000 "$ROT_A"
+
+# Save outer-scope vars we override and restore at the end.
+SAVE_AGENT="${AGENT:-}"
+SAVE_JSONL_ROOT="${JSONL_ROOT:-}"
+SAVE_PARSER_PY="${PARSER_PY:-}"
+SAVE_ROTATE_POLL_SEC="${ROTATE_POLL_SEC:-}"
+
+JSONL_ROOT="$ROT_ROOT/sessions"
+AGENT="RotationTestAgent"
+PARSER_PY='import sys
+for _ in sys.stdin:
+    pass'
+ROTATE_POLL_SEC=1
+
+# Spawn the rotation loop; stderr to /dev/null to silence the log line.
+tail_codex_sessions >/dev/null 2>&1 &
+ROT_LOOP_PID=$!
+
+# Wait for first pipeline to register tail
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.3
+    n=$(pgrep -f "tail.*$ROT_ROOT.*rota" 2>/dev/null | wc -l | tr -d ' ')
+    [ "$n" -ge 1 ] && break
+done
+assert_eq "1" "$n" "session rotation: tail spawned for rollout-A"
+
+# Trigger rotation by adding a newer rollout file
+: > "$ROT_B"
+touch -t 202606180000 "$ROT_B"
+
+# Wait up to 8s for rollout-A tail to die (poll cycle + cleanup) AND
+# rollout-B tail to spawn. ROTATE_POLL_SEC=1 so ~1-2s typical.
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+    sleep 0.5
+    a=$(pgrep -f "tail.*$ROT_ROOT.*rota-$$" 2>/dev/null | wc -l | tr -d ' ')
+    b=$(pgrep -f "tail.*$ROT_ROOT.*rotb-$$" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$a" = "0" ] && [ "$b" -ge 1 ]; then break; fi
+done
+assert_eq "0" "$a" "session rotation: rollout-A tail killed (no leak) after rotation"
+assert_eq "1" "$b" "session rotation: rollout-B tail spawned after rotation"
+
+# Cleanup: kill the rotation loop and any tails left under our temp root
+kill "$ROT_LOOP_PID" 2>/dev/null || true
+sleep 0.3
+pkill -f "tail.*$ROT_ROOT" 2>/dev/null || true
+wait "$ROT_LOOP_PID" 2>/dev/null || true
+rm -rf "$ROT_ROOT"
+
+# Restore outer-scope vars
+AGENT="$SAVE_AGENT"
+JSONL_ROOT="$SAVE_JSONL_ROOT"
+PARSER_PY="$SAVE_PARSER_PY"
+ROTATE_POLL_SEC="$SAVE_ROTATE_POLL_SEC"
+unset SAVE_AGENT SAVE_JSONL_ROOT SAVE_PARSER_PY SAVE_ROTATE_POLL_SEC
+
+# ── Daemon dispatch tests ──
+#
+# The parser unit tests above would still pass even if daemon.sh never
+# started the codex streamer. Static-grep daemon.sh for the dispatch
+# branches to catch that regression.
+
+DAEMON_SH="$SCRIPT_DIR/daemon.sh"
+
+if grep -E '^\s*codex\)\s+ACTIVITY_STREAM=.*activity-stream-codex\.sh' "$DAEMON_SH" >/dev/null; then
+    pass "daemon dispatch: codex branch sets ACTIVITY_STREAM to activity-stream-codex.sh"
+else
+    fail "daemon dispatch: codex branch sets ACTIVITY_STREAM to activity-stream-codex.sh"
+fi
+
+if grep -E '^\s*\*\)\s+ACTIVITY_STREAM=.*activity-stream\.sh' "$DAEMON_SH" >/dev/null; then
+    pass "daemon dispatch: default branch still sets ACTIVITY_STREAM to activity-stream.sh"
+else
+    fail "daemon dispatch: default branch still sets ACTIVITY_STREAM to activity-stream.sh"
+fi
 
 echo ""
 
